@@ -1,0 +1,14 @@
+@inherits LayoutComponentBase
+
+<div class="shell">
+    <nav class="topnav">
+        <span class="brand">SC&nbsp;<span class="brand-accent">HAULER</span></span>
+        <NavLink class="navlink" href="/" Match="NavLinkMatch.All">Manifest</NavLink>
+        <NavLink class="navlink" href="/contracts">Contracts</NavLink>
+        <a class="btn-new" href="/contracts/new">+ Contract</a>
+    </nav>
+
+    <main class="content">
+        @Body
+    </main>
+</div>

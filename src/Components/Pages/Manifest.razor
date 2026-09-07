@@ -1,0 +1,148 @@
+@page "/"
+@inject ManifestService ManifestService
+
+<PageTitle>Manifest - SC Hauler</PageTitle>
+
+<div class="capacity panel">
+    <div class="capacity-row">
+        <span class="cap-label">Onboard</span>
+        <span class="cap-value num">
+            @_onboardScu
+            <small>
+                /
+                <input class="cap-input num" type="number" min="0" @bind="_capacityScu"
+                       @bind:after="SaveCapacityAsync" />
+            </small>
+        </span>
+    </div>
+    @if (_capacityScu > 0)
+    {
+        <div class="cap-track" role="progressbar" aria-valuenow="@_onboardScu" aria-valuemin="0"
+             aria-valuemax="@_capacityScu">
+            <div class="cap-fill @(_onboardScu > _capacityScu ? "over" : null)" style="width: @(FillPercent)%"></div>
+        </div>
+        @if (_onboardScu > _capacityScu)
+        {
+            <p class="cap-warning">Overloaded by @(_onboardScu - _capacityScu) SCU</p>
+        }
+    }
+</div>
+@if (_onboardScu > 0 || _hold.UnplacedBoxes > 0)
+{
+    <HoldView Hold="_hold" />
+}
+
+@if (_stops.Count == 0)
+{
+    <div class="empty panel">
+        <p>No active cargo.</p>
+        <a class="btn-new" href="/contracts/new">Log a contract</a>
+    </div>
+}
+
+@foreach (var stop in _stops)
+{
+    <section class="stop panel">
+        <header class="stop-head">
+            <h2>@stop.LocationName</h2>
+            <div class="stop-tally num">
+                @if (stop.DeliverScu > 0)
+                {
+                    <span class="tag deliver">&#9660; @stop.DeliverScu SCU</span>
+                }
+                @if (stop.PickupScu > 0)
+                {
+                    <span class="tag pickup">&#9650; @stop.PickupScu SCU</span>
+                }
+            </div>
+        </header>
+
+        @foreach (var action in stop.Actions)
+        {
+            @if (action.Kind == ActionKind.Pickup && _pickingUp == action.CargoLineId)
+            {
+                <div class="pickup-entry">
+                    <p class="pickup-entry-title">@action.Commodity - tap the boxes at hand</p>
+                    <BoxCounters Counts="_pickUpCounts" OnChanged="StateHasChanged" />
+                    <div class="pickup-entry-actions">
+                        <span class="pickup-total num">@PickupTotal / @action.Scu SCU</span>
+                        <button class="btn-primary" disabled="@(PickupTotal != action.Scu)"
+                                @onclick="() => ConfirmPickUpAsync(action.CargoLineId)">CONFIRM PICK UP</button>
+                        <button class="btn-plain" @onclick="() => _pickingUp = null">Cancel</button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <button class="action @(action.Kind == ActionKind.Pickup ? "pickup" : "deliver")"
+                        @onclick="() => ActionTappedAsync(action)">
+                    <span class="verb">@(action.Kind == ActionKind.Pickup ? "PICK UP" : "DELIVER")</span>
+                    <span class="cargo">
+                        @action.Commodity
+                        <small class="contract-ref">@action.ContractName</small>
+                        @if (action.Boxes.Count > 0)
+                        {
+                            <small class="boxes num">@string.Join(" · ", action.Boxes.Select(b => $"{b.Count}× {b.Size.Value} SCU"))</small>
+                        }
+                    </span>
+                    <span class="scu num">@action.Scu <small>SCU</small></span>
+                </button>
+            }
+        }
+    </section>
+}
+
+@code {
+    private CargoLineId? _pickingUp;
+    private Dictionary<ContainerSize, int> _pickUpCounts = [];
+    private Services.HoldView _hold = new([], 0);
+
+    private int PickupTotal => _pickUpCounts.Sum(kv => kv.Key.Value * kv.Value);
+
+    private IReadOnlyList<LocationStop> _stops = [];
+    private int _onboardScu;
+    private int _capacityScu;
+
+    private int FillPercent => _capacityScu <= 0
+        ? 0
+        : Math.Min(100, (int)Math.Round(_onboardScu * 100.0 / _capacityScu));
+
+    protected override Task OnInitializedAsync() => RefreshAsync();
+
+    private async Task RefreshAsync()
+    {
+        var snapshot = await ManifestService.GetManifestAsync();
+        _stops = snapshot.Stops;
+        _onboardScu = snapshot.OnboardScu;
+        _capacityScu = snapshot.CapacityScu;
+        _hold = snapshot.Hold;
+    }
+
+    private async Task SaveCapacityAsync()
+    {
+        await ManifestService.SetCapacityAsync(_capacityScu);
+        await RefreshAsync();
+    }
+
+    private async Task ActionTappedAsync(StopAction action)
+    {
+        if (action.Kind == ActionKind.Deliver)
+        {
+            await ManifestService.AdvanceAsync(action.CargoLineId);
+            await RefreshAsync();
+            return;
+        }
+
+        _pickingUp = action.CargoLineId;
+        _pickUpCounts = ContainerSize.All.ToDictionary(s => s, s => action.Boxes.FirstOrDefault(b => b.Size == s)?.Count ?? 0);
+    }
+
+    private async Task ConfirmPickUpAsync(CargoLineId cargoLineId)
+    {
+        var sizes = ContainerSize.All.SelectMany(s => Enumerable.Repeat(s, _pickUpCounts.GetValueOrDefault(s))).ToList();
+
+        await ManifestService.PickUpAsync(cargoLineId, sizes);
+        _pickingUp = null;
+        await RefreshAsync();
+    }
+}

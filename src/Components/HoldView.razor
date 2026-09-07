@@ -1,0 +1,46 @@
+@using System.Globalization
+@using ScHauler.Models
+
+<section class="hold panel">
+    <h2 class="hold-title">Cargo hold</h2>
+    @if (Hold.UnplacedBoxes > 0)
+    {
+        <p class="hold-warning">@Hold.UnplacedBoxes aboard box(es) have no planned spot. Hold was too full at pickup.</p>
+    }
+    <svg class="hold-svg" viewBox="0 0 @ViewWidth @ViewHeight" role="img" aria-label="Top-down cargo hold layout">
+        @foreach (var bay in Hold.Bays)
+        {
+            <g>
+                <rect class="hold-bay" x="@bay.DrawOffsetX" y="@bay.DrawOffsetY" width="@bay.Length" height="@bay.Width" />
+                @SvgText("hold-bay-name", bay.DrawOffsetX + bay.Length - 0.2, bay.DrawOffsetY + bay.Width - 0.3, bay.Name)
+                @foreach (var box in bay.Boxes.Where(b => b.Z == 0))
+                {
+                    <rect class="hold-box" x="@(bay.DrawOffsetX + box.X)" y="@(bay.DrawOffsetY + box.Y)" width="@box.Length"
+                          height="@box.Width" />
+                }
+                @{
+                    var pileIndex = 0;
+                }
+                @foreach (var pile in bay.Boxes.GroupBy(b => b.DropOffName).OrderBy(g => g.Min(b => b.X)).ThenBy(g =>
+            g.Min(b => b.Y)))
+                {
+                    var labelX = bay.DrawOffsetX + pile.Min(b => b.X) + 0.2;
+                    var labelY = bay.DrawOffsetY + 0.9 + pileIndex * 1.0;
+                    @SvgText("hold-pile-label", labelX, labelY, $"{pile.Key} ({pile.Count()})")
+                    pileIndex++;
+                }
+            </g>
+        }
+    </svg>
+</section>
+
+@code {
+    [Parameter, EditorRequired]
+    public Services.HoldView Hold { get; set; } = new([], 0);
+
+    private int ViewWidth => Hold.Bays.Count == 0 ? 1 : Hold.Bays.Max(b => b.DrawOffsetX + b.Length);
+    private int ViewHeight => Hold.Bays.Count == 0 ? 1 : Hold.Bays.Max(b => b.DrawOffsetY + b.Width);
+    private static string Inv(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static MarkupString SvgText(string cssClass, double x, double y, string content) => (MarkupString)$"<text class=\"{cssClass}\" x=\"{Inv(x)}\" y=\"{Inv(y)}\">{System.Net.WebUtility.HtmlEncode(content)}</text>";
+}

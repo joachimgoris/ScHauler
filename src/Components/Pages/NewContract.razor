@@ -1,0 +1,155 @@
+@page "/contracts/new"
+@inject IDbContextFactory<HaulerDbContext> Factory
+@inject NavigationManager Nav
+@inject TimeProvider Time
+
+<PageTitle>New contract - SC Hauler</PageTitle>
+
+<h1 class="page-title">New contract</h1>
+
+<div class="form panel">
+    <label>
+        Contract name
+        <input @bind="_name" placeholder="e.g. Direct Local Delivery - Hurston" />
+    </label>
+    <label>
+        Reward (aUEC)
+        <input class="num" type="number" min="0" @bind="_rewardAuec" />
+    </label>
+</div>
+
+@foreach (var (line, index) in _lines.Select(static (l, i) => (l, i)))
+{
+    <div class="form panel line-form">
+        <div class="line-form-head">
+            <span class="line-form-title">Cargo @(index + 1)</span>
+            @if (_lines.Count > 1)
+            {
+                <button class="btn-plain" @onclick="() => _lines.Remove(line)">Remove</button>
+            }
+        </div>
+        <label>
+            Commodity
+            <input @bind="line.Commodity" placeholder="e.g. Waste" list="commodities" />
+        </label>
+        <label>
+            SCU
+            <input class="num" type="number" min="1" @bind="line.Scu" />
+        </label>
+        <label>
+            Pick up at
+            <input list="locations" @bind="line.Pickup" placeholder="Start typing..." />
+        </label>
+        <label>
+            Deliver to
+            <input list="locations" @bind="line.DropOff" placeholder="Start typing..." />
+        </label>
+    </div>
+}
+
+<div class="form-actions">
+    <button class="btn-secondary" @onclick="() => _lines.Add(new LineDraft())">+ Add cargo line</button>
+    <button class="btn-primary" disabled="@(!CanSave)" @onclick="SaveAsync">Save contract</button>
+</div>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+<datalist id="locations">
+    @foreach (var name in _locationNames)
+    {
+        <option value="@name" />
+    }
+</datalist>
+
+<datalist id=commodities">
+    @foreach (var name in Commodities.All)
+    {
+        <option value="@name" />
+    }
+</datalist>
+
+@code {
+    private sealed class LineDraft
+    {
+        public string Commodity { get; set; } = "";
+        public string Pickup { get; set; } = "";
+        public string DropOff { get; set; } = "";
+        public int Scu { get; set; } = 1;
+
+        public bool IsValid =>
+            !string.IsNullOrWhiteSpace(Commodity)
+            && Scu > 0
+            && !string.IsNullOrWhiteSpace(Pickup)
+            && !string.IsNullOrWhiteSpace(DropOff)
+            && !string.Equals(Pickup.Trim(), DropOff.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private readonly List<LineDraft> _lines = [new LineDraft()];
+    private string _name = "";
+    private int _rewardAuec;
+    private List<string> _locationNames = [];
+    private string? _error;
+
+    private bool CanSave => !string.IsNullOrWhiteSpace(_name) && _lines.Count > 0 && _lines.All(l => l.IsValid);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await Factory.CreateDbContextAsync();
+        _locationNames = await db.Locations
+            .AsNoTracking()
+            .OrderBy(l => l.Name)
+            .Select(l => l.Name)
+            .ToListAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        try
+        {
+            await using var db = await Factory.CreateDbContextAsync();
+
+            var contract = Contract.Create(_name, _rewardAuec, Time.GetUtcNow());
+
+            var resolved = new Dictionary<string, Location>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var draft in _lines)
+            {
+                var pickup = await ResolveLocationAsync(db, resolved, draft.Pickup);
+                var dropOff = await ResolveLocationAsync(db, resolved, draft.DropOff);
+                contract.AddLine(draft.Commodity, new Scu(draft.Scu), pickup, dropOff);
+            }
+
+            db.Contracts.Add(contract);
+            await db.SaveChangesAsync();
+            Nav.NavigateTo("/");
+        }
+        catch (ArgumentException ex)
+        {
+            _error = $"Save failed: {ex.Message}";
+        }
+        catch (DbUpdateException ex)
+        {
+            _error = $"Save failed: {ex.Message}";
+        }
+    }
+
+    private static async Task<Location> ResolveLocationAsync(HaulerDbContext db, Dictionary<string, Location> cache, string
+name)
+    {
+        var trimmed = name.Trim();
+        if (cache.TryGetValue(trimmed, out var cached))
+        {
+            return cached;
+        }
+
+        var location = await db.Locations.FirstOrDefaultAsync(l => l.Name.ToLower() == trimmed.ToLower()) ??
+db.Locations.Add(Location.Create(trimmed)).Entity;
+
+        cache[trimmed] = location;
+        return location;
+    }
+}

@@ -1,0 +1,10 @@
+# Build output
+bin/
+obj/
+
+# Local SQLite data (disposable per game session)
+src/Data/hauler.db*
+data/
+
+# OS / editor
+.DS_Store

@@ -1,0 +1,6 @@
+**/bin/
+**/obj/
+ScHauler.Tests/
+data/
+.git/
+*.md

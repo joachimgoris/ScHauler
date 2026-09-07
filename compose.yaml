@@ -1,0 +1,9 @@
+services:
+  sc-hauler:
+    build: .
+    container_name: sc-hauler
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data:U
+    restart: unless-stopped

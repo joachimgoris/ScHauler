@@ -1,0 +1,13 @@
+root = true
+
+[*.cs]
+# No SynchronizationContext in ASP.NET Core — ConfigureAwait(false) is noise here
+dotnet_diagnostic.CA2007.severity = none
+# Blazor components and Program must be discoverable; "make types internal" fights the framework
+dotnet_diagnostic.CA1515.severity = none
+# LoggerMessage source-gen delegates — real practice at scale, ceremony in a 3-page app
+dotnet_diagnostic.CA1848.severity = none
+
+[*Tests.cs]
+# Underscores in test method names are the xunit convention
+dotnet_diagnostic.CA1707.severity = none

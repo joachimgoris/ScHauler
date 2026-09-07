@@ -1,0 +1,30 @@
+@using ScHauler.Models
+
+<div class="box-counters">
+    @foreach (var size in ContainerSize.All)
+    {
+        var count = Counts.GetValueOrDefault(size);
+        <div class="box-counter">
+            <span class="box-size num">@size.Value <small>SCU</small></span>
+            <button type="button" class="btn-step" disabled="@(count == 0)" aria-label="Remove one @size.Value SCU box"
+                    @onclick="() => ChangeAsync(size, -1)">-</button>
+            <span class="box-count num">@count</span>
+            <button type="button" class="btn-step" aria-label="Add one @size.Value SCU box"
+                    @onclick="() => ChangeAsync(size, +1)">+</button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public Dictionary<ContainerSize, int> Counts { get; set; } = [];
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private Task ChangeAsync(ContainerSize size, int delta)
+    {
+        Counts[size] = Math.Max(0, Counts.GetValueOrDefault(size) + delta);
+        return OnChanged.InvokeAsync();
+    }
+}

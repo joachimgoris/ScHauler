@@ -1,0 +1,638 @@
+/* ============================================================
+   SC HAULER — cargo manifest for a dark room and a tablet.
+   Type: Rajdhani (display), system (body), IBM Plex Mono (numbers)
+   ============================================================ */
+
+:root {
+  --bg: #0c111b;
+  --panel: #151d2c;
+  --panel-raised: #1b2536;
+  --line: #26324a;
+  --text: #e8edf7;
+  --dim: #8fa0bc;
+  --pickup: #ffb454;
+  --pickup-dim: #4a3a22;
+  --deliver: #5bc8f5;
+  --deliver-dim: #1d3a4a;
+  --danger: #f07178;
+  --radius: 10px;
+  --display: "Rajdhani", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.shell {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 12px 48px;
+}
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- top nav ------------------------------------------------ */
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 4px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 16px;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+}
+
+.brand {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.14em;
+  margin-right: auto;
+}
+
+.brand-accent {
+  color: var(--pickup);
+}
+
+.navlink {
+  font-family: var(--display);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+  color: var(--dim);
+  text-decoration: none;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.navlink.active {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.btn-new {
+  font-family: var(--display);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+  color: #10151f;
+  background: var(--pickup);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  text-decoration: none;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ---- panels (manifest-plate signature: clipped corner) ------ */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 14px;
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+}
+
+/* ---- capacity bar ------------------------------------------- */
+
+.capacity {
+  padding: 14px 16px;
+}
+
+.capacity-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.cap-label {
+  font-family: var(--display);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+
+.cap-value {
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.cap-value small {
+  color: var(--dim);
+  font-size: 0.9rem;
+}
+
+.cap-input {
+  width: 4.5em;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.95rem;
+  padding: 4px 6px;
+  text-align: right;
+}
+
+.cap-track {
+  height: 10px;
+  margin-top: 10px;
+  background: var(--panel-raised);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.cap-fill {
+  height: 100%;
+  background: var(--deliver);
+  transition: width 200ms ease;
+}
+
+.cap-fill.over {
+  background: var(--danger);
+}
+
+.cap-warning {
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ---- stops -------------------------------------------------- */
+
+.stop {
+  padding: 0 0 6px;
+}
+
+.stop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.stop-head h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.stop-tally {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.tag {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.tag.pickup {
+  color: var(--pickup);
+  background: var(--pickup-dim);
+}
+
+.tag.deliver {
+  color: var(--deliver);
+  background: var(--deliver-dim);
+}
+
+.tag.done-tag {
+  color: var(--dim);
+  background: var(--panel-raised);
+}
+
+/* ---- action rows: the two-tap loop -------------------------- */
+
+.action {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 16px;
+  margin: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-left: 4px solid transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.action:last-child {
+  border-bottom: none;
+}
+
+.action.pickup {
+  border-left-color: var(--pickup);
+}
+
+.action.deliver {
+  border-left-color: var(--deliver);
+}
+
+.action:active {
+  background: var(--panel-raised);
+}
+
+.verb {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+}
+
+.action.pickup .verb {
+  color: var(--pickup);
+}
+
+.action.deliver .verb {
+  color: var(--deliver);
+}
+
+.cargo {
+  display: flex;
+  flex-direction: column;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.contract-ref {
+  color: var(--dim);
+  font-weight: 400;
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scu {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.scu small {
+  color: var(--dim);
+  font-size: 0.75rem;
+}
+
+/* ---- contracts page ----------------------------------------- */
+
+.page-title {
+  font-family: var(--display);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 1.3rem;
+  margin: 4px 4px 14px;
+}
+
+.contract {
+  padding: 0;
+}
+
+.contract.done {
+  opacity: 0.6;
+}
+
+.contract-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.contract-head h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.reward {
+  color: var(--pickup);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.line {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.line.delivered .line-info {
+  color: var(--dim);
+  text-decoration: line-through;
+}
+
+.line-info {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.route {
+  color: var(--dim);
+  font-size: 0.9rem;
+}
+
+.stepper {
+  display: flex;
+  gap: 6px;
+}
+
+.step {
+  flex: 1;
+  min-height: 44px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--dim);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.step.current {
+  color: #10151f;
+  background: var(--deliver);
+  border-color: var(--deliver);
+  font-weight: 700;
+}
+
+.contract-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+}
+
+/* ---- forms --------------------------------------------------- */
+
+.form {
+  padding: 14px 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.line-form-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.line-form-title {
+  font-family: var(--display);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+
+label {
+  display: grid;
+  gap: 5px;
+  font-size: 0.85rem;
+  color: var(--dim);
+}
+
+input {
+  min-height: 48px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  padding: 8px 12px;
+}
+
+input:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--deliver);
+  outline-offset: 2px;
+}
+
+.form-actions {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.btn-primary,
+.btn-secondary {
+  min-height: 54px;
+  border-radius: var(--radius);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--pickup);
+  border: none;
+  color: #10151f;
+}
+
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--dim);
+}
+
+.btn-plain {
+  background: none;
+  border: none;
+  color: var(--dim);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.btn-danger {
+  background: var(--danger);
+  border: none;
+  border-radius: 8px;
+  color: #10151f;
+  font-weight: 700;
+  min-height: 44px;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.error {
+  color: var(--danger);
+  padding: 0 4px;
+}
+
+/* ---- empty state --------------------------------------------- */
+
+.empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--dim);
+}
+
+.empty .btn-new {
+  margin-top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cap-fill {
+    transition: none;
+  }
+}
+
+.box-counters {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.box-counter {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.box-size {
+  min-width: 4.5rem;
+}
+
+.btn-step {
+  min-width: 44px;
+  min-height: 44px;
+  font-size: 1.25rem;
+}
+
+.box-count {
+  min-width: 2ch;
+  text-align: center;
+}
+
+.box-total {
+  margin-top: 0.25rem;
+  font-weight: 600;
+}
+
+.action .boxes {
+  display: block;
+  opacity: 0.8;
+}
+
+.pickup-entry {
+  padding: 0.75rem;
+  border: 1px dashed currentColor;
+  margin: -0.25rem 0;
+}
+
+.pickup-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.hold-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.hold-bay {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 0.08;
+  opacity: 0.5;
+}
+
+.hold-bay-name {
+  fill: currentColor;
+  font-size: 0.7px;
+  opacity: 0.35;
+  text-anchor: end;
+}
+
+.hold-box {
+  fill: currentColor;
+  opacity: 0.25;
+  stroke: currentColor;
+  stroke-width: 0.05;
+}
+
+.hold-pile-label {
+  fill: currentColor;
+  font-size: 0.7px;
+  font-weight: 600;
+  text-anchor: start;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 00.75);
+  stroke-width: 0.12px;
+}
+
+.hold-warning {
+  font-weight: 600;
+}

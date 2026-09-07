@@ -1,0 +1,98 @@
+@page "/contracts"
+@inject IDbContextFactory<HaulerDbContext> Factory
+@inject ManifestService Manifest
+
+<PageTitle>Contracts - SC Hauler</PageTitle>
+
+<h1 class="page-title">Contracts</h1>
+
+@if (_contracts.Count == 0)
+{
+    <div class="empty panel">
+        <p>Nothing logged yet.</p>
+        <a class="btn-new" href="/contracts/new">Log a contract</a>
+    </div>
+}
+
+@foreach (var contract in _contracts)
+{
+    <section class="contract panel @(contract.IsCompleted ? "done" : null)">
+        <header class="contract-head">
+            <h2>@contract.Name</h2>
+            <span class="reward num">@contract.RewardAuec.ToString("N0") aUEC</span>
+        </header>
+
+        @foreach (var line in contract.Lines)
+        {
+            <div class="line @(line.Status == CargoLineStatus.Delivered ? "delivered" : null)">
+                <div class="line-info">
+                    <span class="cargo">@line.Commodity <span class="scu num">@line.Scu.Value SCU</span></span>
+                    <span class="route">@line.PickupLocation.Name &rarr; @line.DropOffLocation.Name</span>
+                </div>
+                <div class="stepper" role="group" aria-label="Cargo status">
+                    <button class="step @(line.Status == CargoLineStatus.Pending ? "current" : null)"
+                            @onclick="() => CorrectAsync(line.Id, CargoLineStatus.Pending)">
+                        Pending
+                    </button>
+                    <button class="step @(line.Status == CargoLineStatus.PickedUp ? "current" : null)"
+                            @onclick="() => CorrectAsync(line.Id, CargoLineStatus.PickedUp)">
+                        Picked up
+                    </button>
+                    <button class="step @(line.Status == CargoLineStatus.Delivered ? "current" : null)"
+                            @onclick="() => CorrectAsync(line.Id, CargoLineStatus.Delivered)">
+                        Delivered
+                    </button>
+                </div>
+            </div>
+        }
+
+        <footer class="contract-foot">
+            @if (contract.IsCompleted)
+            {
+                <span class="tag done-tag">&#10003; Completed</span>
+            }
+            @if (_confirmDeleteId == contract.Id)
+            {
+                <button class="btn-danger" @onclick="() => DeleteAsync(contract.Id)">Confirm delete</button>
+                <button class="btn-plain" @onclick="() => _confirmDeleteId = null">Keep</button>
+            }
+            else
+            {
+                <button class="btn-plain" @onclick="() => _confirmDeleteId = contract.Id">Delete</button>
+            }
+        </footer>
+    </section>
+}
+
+@code {
+    private List<Contract> _contracts = [];
+    private ContractId? _confirmDeleteId;
+
+    protected override Task OnInitializedAsync() => RefreshAsync();
+
+    private async Task RefreshAsync()
+    {
+        await using var db = await Factory.CreateDbContextAsync();
+        _contracts = (await db.Contracts
+            .AsNoTracking()
+            .Include(c => c.Lines).ThenInclude(l => l.PickupLocation)
+            .Include(c => c.Lines).ThenInclude(l => l.DropOffLocation)
+            .ToListAsync())
+            .OrderByDescending(c => c.AcceptedAt)
+            .ToList();
+    }
+
+    private async Task CorrectAsync(CargoLineId cargoLineId, CargoLineStatus status)
+    {
+        await Manifest.CorrectAsync(cargoLineId, status);
+        await RefreshAsync();
+    }
+
+    private async Task DeleteAsync(ContractId contractId)
+    {
+        await using var db = await Factory.CreateDbContextAsync();
+        await db.Contracts.Where(c => c.Id == contractId).ExecuteDeleteAsync();
+        _confirmDeleteId = null;
+        await RefreshAsync();
+    }
+}
