@@ -1,46 +1,124 @@
-@using System.Globalization
-@using ScHauler.Models
-
 <section class="hold panel">
-    <h2 class="hold-title">Cargo hold</h2>
-    @if (Hold.UnplacedBoxes > 0)
-    {
-        <p class="hold-warning">@Hold.UnplacedBoxes aboard box(es) have no planned spot. Hold was too full at pickup.</p>
-    }
-    <svg class="hold-svg" viewBox="0 0 @ViewWidth @ViewHeight" role="img" aria-label="Top-down cargo hold layout">
-        @foreach (var bay in Hold.Bays)
+    <header class="hold-head">
+        <div class="hold-head-titles">
+            <h2 class="hold-title">Cargo hold</h2>
+            <p class="hold-subtitle">Ironclad · top-down · one cell = 1 SCU footprint · ruler = cells from ramp</p>
+        </div>
+        <div class="hold-head-status">
+            <span class="hold-isolate-status">
+                @(Isolated is null ? "Tap a destination to isolate it" : $"Isolating {Isolated} — tap again to show all")
+            </span>
+            @if (Isolated is not null)
+            {
+                <button type="button" class="hold-showall" @onclick="() => OnToggleIsolate.InvokeAsync(Isolated)">SHOW
+                    ALL</button>
+                }
+            </div>
+        </header>
+
+        @if (Hold.UnplacedBoxes > 0)
         {
-            <g>
-                <rect class="hold-bay" x="@bay.DrawOffsetX" y="@bay.DrawOffsetY" width="@bay.Length" height="@bay.Width" />
-                @SvgText("hold-bay-name", bay.DrawOffsetX + bay.Length - 0.2, bay.DrawOffsetY + bay.Width - 0.3, bay.Name)
-                @foreach (var box in bay.Boxes.Where(b => b.Z == 0))
-                {
-                    <rect class="hold-box" x="@(bay.DrawOffsetX + box.X)" y="@(bay.DrawOffsetY + box.Y)" width="@box.Length"
-                          height="@box.Width" />
-                }
-                @{
-                    var pileIndex = 0;
-                }
-                @foreach (var pile in bay.Boxes.GroupBy(b => b.DropOffName).OrderBy(g => g.Min(b => b.X)).ThenBy(g =>
-            g.Min(b => b.Y)))
-                {
-                    var labelX = bay.DrawOffsetX + pile.Min(b => b.X) + 0.2;
-                    var labelY = bay.DrawOffsetY + 0.9 + pileIndex * 1.0;
-                    @SvgText("hold-pile-label", labelX, labelY, $"{pile.Key} ({pile.Count()})")
-                    pileIndex++;
-                }
-            </g>
+            <p class="hold-warning">@Hold.UnplacedBoxes aboard box(es) have no planned spot — hold was too full at pickup.</p>
         }
-    </svg>
-</section>
+
+        <div class="hold-plan-area">
+            <div class="hold-ramp" aria-hidden="true">
+                <span class="hold-ramp-word">RAMP</span>
+                <span class="hold-ramp-arrow">▸</span>
+            </div>
+            <div class="hold-plan-wrapper">
+                <div class="hold-ruler" aria-hidden="true">
+                    @foreach (var tick in RulerTicks)
+                    {
+                        <span class="hold-tick num" style="left: calc(var(--cell) * @tick);">@tick</span>
+                    }
+                </div>
+                <div class="hold-canvas">
+                    <div class="hold-structure hold-spine" aria-hidden="true"></div>
+                    <div class="hold-structure hold-corridor" aria-hidden="true"></div>
+                    @foreach (var bay in Hold.Bays)
+                    {
+                        <div class="hold-bayfloor"
+                             style="left: calc(var(--cell) * @bay.DrawOffsetX); top: calc(var(--cell) * @bay.DrawOffsetY); width: calc(var(--cell) * @bay.Length); height: calc(var(--cell) * @bay.Width);">
+                        </div>
+                        <div class="hold-baychip @(bay.DrawOffsetY == 0 ? "hold-baychip-top" : "hold-baychip-bottom")"
+                             style="left: calc(var(--cell) * @bay.DrawOffsetX);">
+                            <span class="hold-bayname">@BayLabel(bay.Name)</span>
+                            <span class="hold-bayuse num">@bay.Boxes.Sum(b => b.Scu)/@(bay.Length* bay.Width*
+                                                    bay.Height)</span>
+                            </div>
+                        }
+                        @foreach (var stack in Stacks())
+                        {
+                            <button type="button"
+                                    class="hold-box @(Isolated is not null && !DestEquals(Isolated, stack.Dest) ? "hold-box-dimmed" : null)"
+                                    style="--c: @stack.Color; left: calc(var(--cell) * @stack.X + 1px); top: calc(var(--cell) * @stack.Y + 1px); width: calc(var(--cell) * @stack.W - 2px); height: calc(var(--cell) * @stack.D - 2px);"
+                                    aria-label="@stack.Count box(es), @stack.TotalScu SCU for @stack.Dest"
+                                    @onclick="() => OnToggleIsolate.InvokeAsync(stack.Dest)">
+                                <span class="hold-box-scu num">@stack.MainScu</span>
+                                <span class="hold-box-sub num">@stack.Sub</span>
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        </section>
 
 @code {
+    private static readonly int[] RulerTicks = [0, 5, 10, 15, 20, 25, 30];
+
     [Parameter, EditorRequired]
     public Services.HoldView Hold { get; set; } = new([], 0);
 
-    private int ViewWidth => Hold.Bays.Count == 0 ? 1 : Hold.Bays.Max(b => b.DrawOffsetX + b.Length);
-    private int ViewHeight => Hold.Bays.Count == 0 ? 1 : Hold.Bays.Max(b => b.DrawOffsetY + b.Width);
-    private static string Inv(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+    [Parameter, EditorRequired]
+    public IReadOnlyDictionary<string, string> Colors { get; set; } = new Dictionary<string, string>();
 
-    private static MarkupString SvgText(string cssClass, double x, double y, string content) => (MarkupString)$"<text class=\"{cssClass}\" x=\"{Inv(x)}\" y=\"{Inv(y)}\">{System.Net.WebUtility.HtmlEncode(content)}</text>";
+    [Parameter]
+    public string? Isolated { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnToggleIsolate { get; set; }
+
+    private sealed record BoxStack(
+        string Dest, string Color, int X, int Y, int W, int D, int Count, int MainScu, int TotalScu, string Sub);
+
+    /// <summary>
+    /// Merges vertically stacked boxes sharing a footprint column into one drawn
+    /// stack, per the design ("×n hN"). Mixed-size columns label the column total.
+    /// </summary>
+    private IEnumerable<BoxStack> Stacks()
+    {
+        foreach (var bay in Hold.Bays)
+        {
+            foreach (var column in bay.Boxes.GroupBy(b => (b.X, b.Y, b.Length, b.Width)))
+            {
+                var boxes = column.OrderBy(b => b.Z).ToList();
+                var dest = boxes[0].DropOffName;
+                var total = boxes.Sum(b => b.Scu);
+                var heightCells = boxes.Max(b => b.Z + b.Height);
+                var sub = boxes.Count > 1 ? $"×{boxes.Count} h{heightCells}" : $"h{heightCells}";
+
+                yield return new BoxStack(
+                    dest,
+                    Colors.GetValueOrDefault(dest, "#6cb8e8"),
+                    bay.DrawOffsetX + column.Key.X,
+                    bay.DrawOffsetY + column.Key.Y,
+                    column.Key.Length,
+                    column.Key.Width,
+                    boxes.Count,
+                    boxes.Count == 1 ? boxes[0].Scu : total,
+                    total,
+                    sub);
+            }
+        }
+    }
+ 
+    private static bool DestEquals(string? a, string? b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    private static string BayLabel(string name) => name.ToUpperInvariant() switch
+    {
+        "FWD STARBOARD" => "FWD STBD",
+        "AFT STARBOARD" => "AFT STBD",
+        var upper => upper,
+    };
 }

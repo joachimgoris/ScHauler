@@ -49,7 +49,7 @@ await confirm.click();
 await page.waitForTimeout(1200);
 
 // 4. Deliver action with breakdown
-const deliver = page.locator('button.action.deliver');
+const deliver = page.locator('.route-row-action');
 console.log('deliver action visible:', await deliver.count() === 1, '| text:', (await deliver.textContent()).replace(/\s+/g, ' ').trim());
 console.log('onboard tally:', (await page.locator('.cap-value').textContent()).replace(/\s+/g, ' ').trim());
 await deliver.click();

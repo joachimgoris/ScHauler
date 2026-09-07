@@ -8,3 +8,7 @@ data/
 
 # OS / editor
 .DS_Store
+
+# Design bundles stay local (decision 2026-09-07)
+design_handoff_cargo_hold/
+*.zip

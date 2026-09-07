@@ -12,7 +12,7 @@ public sealed record LocationStop(string LocationName, IReadOnlyList<StopAction>
     public int DeliverScu => Actions.Where(a => a.Kind == ActionKind.Deliver).Sum(a => a.Scu);
 }
 
-public sealed record HoldBoxView(int X, int Y, int Z, int Length, int Width, string DropOffName);
+public sealed record HoldBoxView(int X, int Y, int Z, int Length, int Width, int Scu, int Height, string DropOffName);
 
 public sealed record HoldBayView(string Name, int Length, int Width, int Height, int DrawOffsetX, int DrawOffsetY, IReadOnlyList<HoldBoxView> Boxes);
 
@@ -67,7 +67,7 @@ public static class ManifestPlanner
 
             var length = p.Rotated ? container.Size.Width : container.Size.Length;
             var width = p.Rotated ? container.Size.Length : container.Size.Width;
-            placed.Add((p.BayId, new HoldBoxView(p.X, p.Y, p.Z, length, width, container.Line.DropOffLocation.Name)));
+            placed.Add((p.BayId, new HoldBoxView(p.X, p.Y, p.Z, length, width, container.Size.Value, container.Size.Height, container.Line.DropOffLocation.Name)));
         }
 
         var bayViews = bays.Select(b => new HoldBayView(b.Name, b.Length, b.Width, b.Height, b.DrawOffsetX, b.DrawOffsetY, [.. placed.Where(x => x.BayId == b.Id).Select(x => x.Box).OrderBy(x => x.Z)])).ToList();

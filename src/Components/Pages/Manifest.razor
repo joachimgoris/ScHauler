@@ -27,10 +27,11 @@
         }
     }
 </div>
-@if (_onboardScu > 0 || _hold.UnplacedBoxes > 0)
-{
-    <HoldView Hold="_hold" />
-}
+<div class="manifest-body">
+    <HoldView Hold="_hold" Colors="_colors" Isolated="@_isolated" OnToggleIsolate="ToggleIsolate" />
+    <RouteManifest Stops="_stops" Hold="_hold" DropOrder="_dropOrder" Colors="_colors"
+                   Isolated="@_isolated" OnToggleIsolate="ToggleIsolate" OnMove="MoveStop" OnDeliver="DeliverAsync" />
+</div>
 
 @if (_stops.Count == 0)
 {
@@ -42,6 +43,11 @@
 
 @foreach (var stop in _stops)
 {
+    var pickups = stop.Actions.Where(a => a.Kind == ActionKind.Pickup).ToList();
+    if (pickups.Count == 0)
+    {
+        continue;
+    }
     <section class="stop panel">
         <header class="stop-head">
             <h2>@stop.LocationName</h2>
@@ -57,7 +63,7 @@
             </div>
         </header>
 
-        @foreach (var action in stop.Actions)
+        @foreach (var action in pickups)
         {
             @if (action.Kind == ActionKind.Pickup && _pickingUp == action.CargoLineId)
             {
@@ -97,6 +103,14 @@
     private Dictionary<ContainerSize, int> _pickUpCounts = [];
     private Services.HoldView _hold = new([], 0);
 
+    // Design token pool; assigned to destinations in drop order, stable everywhere.
+    private static readonly string[] DestinationColors =
+        ["#a78bfa", "#6cb8e8", "#5fd0a8", "#f87171", "#a3e635", "#fb923c"];
+
+    private string? _isolated;
+    private List<string> _dropOrder = [];
+    private Dictionary<string, string> _colors = new(StringComparer.OrdinalIgnoreCase);
+
     private int PickupTotal => _pickUpCounts.Sum(kv => kv.Key.Value * kv.Value);
 
     private IReadOnlyList<LocationStop> _stops = [];
@@ -116,6 +130,42 @@
         _onboardScu = snapshot.OnboardScu;
         _capacityScu = snapshot.CapacityScu;
         _hold = snapshot.Hold;
+        SyncDropOrder();
+    }
+
+    // Drop order is user-controlled (design: stops[]); session-local until
+    // Phase B1 provides a computed default route order.
+    private void SyncDropOrder()
+    {
+        var current = _stops
+            .Where(s => s.Actions.Any(a => a.Kind == ActionKind.Deliver))
+            .Select(s => s.LocationName)
+            .ToList();
+
+        _dropOrder = _dropOrder
+            .Where(d => current.Contains(d, StringComparer.OrdinalIgnoreCase))
+            .Concat(current.Where(c => !_dropOrder.Contains(c, StringComparer.OrdinalIgnoreCase)))
+            .ToList();
+
+        _colors = _dropOrder
+            .Select((name, index) => (name, Color: DestinationColors[index % DestinationColors.Length]))
+            .ToDictionary(x => x.name, x => x.Color, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void ToggleIsolate(string dest) =>
+        _isolated = string.Equals(_isolated, dest, StringComparison.OrdinalIgnoreCase) ? null : dest;
+
+    private void MoveStop((string Dest, int Delta) move)
+    {
+        var from = _dropOrder.FindIndex(d => string.Equals(d, move.Dest, StringComparison.OrdinalIgnoreCase));
+        var to = from + move.Delta;
+        if (from < 0 || to < 0 || to >= _dropOrder.Count)
+        {
+            return;
+        }
+
+        (_dropOrder[from], _dropOrder[to]) = (_dropOrder[to], _dropOrder[from]);
+        SyncDropOrder();
     }
 
     private async Task SaveCapacityAsync()
@@ -124,17 +174,17 @@
         await RefreshAsync();
     }
 
-    private async Task ActionTappedAsync(StopAction action)
+    private async Task DeliverAsync(CargoLineId cargoLineId)
     {
-        if (action.Kind == ActionKind.Deliver)
-        {
-            await ManifestService.AdvanceAsync(action.CargoLineId);
-            await RefreshAsync();
-            return;
-        }
+        await ManifestService.AdvanceAsync(cargoLineId);
+        await RefreshAsync();
+    }
 
+    private Task ActionTappedAsync(StopAction action)
+    {
         _pickingUp = action.CargoLineId;
         _pickUpCounts = ContainerSize.All.ToDictionary(s => s, s => action.Boxes.FirstOrDefault(b => b.Size == s)?.Count ?? 0);
+        return Task.CompletedTask;
     }
 
     private async Task ConfirmPickUpAsync(CargoLineId cargoLineId)

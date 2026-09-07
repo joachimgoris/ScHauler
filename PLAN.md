@@ -102,6 +102,26 @@ lines by location. Only ship in use: **Drake Ironclad**.
 - Commodity autocomplete via static list + datalist (Services/Commodities).
 - SQLite cannot ORDER BY DateTimeOffset — Contracts page orders client-side.
 
+### 2026-09-07 — cargo-hold redesign adopted (design_handoff_cargo_hold/)
+
+- Manifest cargo hold rebuilt to the design bundle's spec: ramp gutter +
+  depth ruler (cells from ramp), container-query cell sizing, visible 1-SCU
+  grid, spine/corridor structure hatching, bay label chips with used/capacity,
+  true-footprint destination-colored stacks (merged ×n hN labels),
+  tap-to-isolate + SHOW ALL. AS LOADED = real frozen placements, always.
+- **Deferred to Phase B** (need route order): AS LOADED/SUGGESTED STOW toggle,
+  stow check note, stop numbers, route & manifest column with ▲/▼ reorder,
+  capacity-band legend chips + per-destination bar segments. The design's
+  "suggested stow packer" (last stop deepest, contiguous per destination,
+  frontier no-backfill) IS the B2 forecaster spec.
+- **Design README correction**: its footprint table lists 24 SCU as 4×2×3;
+  game truth (wiki-verified) is 6×2×2 — the repo implementation wins.
+- **Protanopia caveat on the color pool** (#f87171/#a3e635/#fb923c/#5fd0a8
+  are confusable): acceptable for 2-3 destination runs; if 4+ destinations
+  get muddy in the field, add stop-number badges to stacks (B2 has stop
+  numbers anyway).
+- Sequencing confirmed: **B1 route ordering first, then B2 suggested stow**.
+
 ### Pending decisions (recommendation noted; confirm when reached)
 
 - **Container edit rules** — implemented: add/remove only while Pending,
@@ -154,7 +174,9 @@ cancel (hard delete) with confirm step. Two-tap happy path is the bar.
    stack-height badge (×N). Pickup flow unchanged (plan recomputes and
    redraws). Manual drag-to-override is explicitly v2.
 
-## Phase B — Route ordering (← NEXT; gate: one real play session with the stowage plan)
+## Phase B — Route ordering + suggested stow (← NEXT)
+
+### B1 — Route ordering (prerequisite for B2)
 
 **No coordinates, no pathfinding.** `Location.ParentId` hierarchy
 (location → planet/moon → system); hop-based distance: same location 0,
@@ -167,8 +189,18 @@ same body 1, same system 2, cross-system 3.
 - Stays in ManifestPlanner (pure, tested); heuristic named in the UI so it
   never looks authoritative.
 - Seed data gains parents for existing locations.
-- Future hook: StowagePlanner could prefer piling the next stop's cargo
-  nearest the ramp.
+
+### B2 — Suggested stow (the design bundle's remaining scope)
+
+- `StowageForecaster`: pure, recomputed (never stored) — reserves regions
+  per destination from SCU totals (1 SCU = 1 cell, exact), ramp-outward in
+  drop order, contiguous per destination, frontier no-backfill (design
+  packer rules). Pending lines only; frozen placements are immovable input.
+- StowagePlanner honors the destination's reservation as a soft preference
+  at pickup (try region first, greedy fallback).
+- UI: SUGGESTED STOW toggle, stow check note (min-X per stop vs drop order),
+  ghost regions for pending cargo, route & manifest column with ▲/▼ drop
+  order, capacity legend + segments, stop-number badges.
 
 ## Definition of done, all phases
 
