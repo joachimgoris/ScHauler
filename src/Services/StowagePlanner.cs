@@ -60,7 +60,7 @@ public static class StowagePlanner
         ContainerSize size)
     {
         Placement? best = null;
-        var bestKey = (Category: int.MaxValue, Bay: 0, Z: 0, X: 0, Y: 0, Rotated: 0);
+        var bestKey = (Category: int.MaxValue, Bay: 0, X: 0, Y: 0, Z: 0, Rotated: 0);
 
         for (int bayIndex = 0; bayIndex < bays.Count; bayIndex++)
         {
@@ -86,7 +86,7 @@ public static class StowagePlanner
                             }
 
                             var category = TouchesOwnPile(occupied, destination, size, candidate) ? 0 : 1;
-                            var key = (category, bayIndex, z, x, y, rotated ? 1 : 0);
+                            var key = (category, bayIndex, x, y, z, rotated ? 1 : 0);
                             if (key.CompareTo(bestKey) < 0)
                             {
                                 best = candidate;

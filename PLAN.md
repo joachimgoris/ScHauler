@@ -122,6 +122,13 @@ lines by location. Only ship in use: **Drake Ironclad**.
   numbers anyway).
 - Sequencing confirmed: **B1 route ordering first, then B2 suggested stow**.
 
+### 2026-09-09 — field decision: stack vertically first
+
+- StowagePlanner prefers towers over layers: candidate ranking is now
+  (touches-own-pile, bay, X, Y, Z) — boxes stack to bay height before the
+  pile spreads, building a wall outward from the ramp. Was layer-first;
+  changed on field feedback (multiple 1 SCU boxes should stack, not carpet).
+
 ### Pending decisions (recommendation noted; confirm when reached)
 
 - **Container edit rules** — implemented: add/remove only while Pending,
