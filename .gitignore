@@ -2,9 +2,10 @@
 bin/
 obj/
 
-# Local SQLite data (disposable per game session)
+# Local SQLite data (disposable per game session; note: git ignore matching is
+# case-insensitive on macOS, so a bare data/ would swallow src/Data/ — scope it)
 src/Data/hauler.db*
-data/
+/data/
 
 # OS / editor
 .DS_Store
