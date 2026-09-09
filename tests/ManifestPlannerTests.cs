@@ -16,7 +16,7 @@ public class ManifestPlannerTests
     {
         var boxes = sizes ?? [ContainerSize.Eight, ContainerSize.Two];
         var owner = Contract.Create(contract, 0, DateTimeOffset.UnixEpoch);
-        var line = owner.AddLine(commodity, new Scu(boxes.Sum(s => s.Value)), Location.Create(pickup), Location.Create(dropOff));
+        var line = owner.AddLine(commodity, new Scu(boxes.Sum(s => s.Value)), TestLocations.Site(pickup), TestLocations.Site(dropOff));
         if (status is CargoLineStatus.PickedUp or CargoLineStatus.Delivered)
         {
             line.PickUp(boxes);

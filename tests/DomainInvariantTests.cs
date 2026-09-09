@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using ScHauler.Models;
 
 namespace ScHauler.Tests;
@@ -9,7 +8,7 @@ public class DomainInvariantTests
     private static CargoLine PendingLine(int scu = 10)
     {
         var contract = Contract.Create("Contract A", 0, DateTimeOffset.UnixEpoch);
-        return contract.AddLine("Waste", new Scu(scu), Location.Create("Everus Harbor"), Location.Create("Baijini Point"));
+        return contract.AddLine("Waste", new Scu(scu), TestLocations.Site("Everus Harbor"), TestLocations.Site("Baijini Point"));
     }
 
     private static Placement SomePlacement() => new(ShipBayId.New(), X: 0, Y: 0, Z: 0, Rotated: false);
@@ -31,7 +30,7 @@ public class DomainInvariantTests
     public void AddLine_RejectsSamePickupAndDropOff()
     {
         var contract = Contract.Create("Contract A", 0, DateTimeOffset.UnixEpoch);
-        var location = Location.Create("Everus Harbor");
+        var location = TestLocations.Site("Everus Harbor");
 
         Assert.Throws<ArgumentException>(() => contract.AddLine("Waste", new Scu(1), location, location));
     }
@@ -222,5 +221,28 @@ public class DomainInvariantTests
         line.Advance();
 
         Assert.That(line.Containers.First().Placement, Is.Not.Null);
+    }
+
+    [Test]
+    public void Location_System_RejectsParent()
+    {
+        var stanton = Location.Create("Stanton", LocationKind.System, parent: null);
+
+        Assert.Throws<ArgumentException>(() => Location.Create("Nope", LocationKind.System, stanton));
+    }
+
+    [Test]
+    public void Location_Body_RequiresSystemParent()
+    {
+        var stanton = Location.Create("Stanton", LocationKind.System, parent: null);
+        var hurston = Location.Create("Hurston", LocationKind.Body, stanton);
+
+        Assert.Throws<ArgumentException>(() => Location.Create("Moonlet", LocationKind.Body, hurston));
+    }
+
+    [Test]
+    public void Location_Site_RequiresBodyOrSystemParent()
+    {
+        Assert.Throws<ArgumentException>(() => Location.Create("Everus Harbor", LocationKind.Site, parent: null));
     }
 }

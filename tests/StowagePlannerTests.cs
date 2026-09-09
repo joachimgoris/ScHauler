@@ -16,7 +16,7 @@ public class StowagePlannerTests
     private static CargoLine PickedUpLine(string dropOff, params ContainerSize[] sizes)
     {
         var contract = Contract.Create("C", 0, DateTimeOffset.UnixEpoch);
-        var line = contract.AddLine("Waste", new Scu(sizes.Sum(s => s.Value)), Location.Create("Everus Harbor"), Location.Create(dropOff));
+        var line = contract.AddLine("Waste", new Scu(sizes.Sum(s => s.Value)), TestLocations.Site("Everus Harbor"), TestLocations.Site(dropOff));
         line.PickUp(sizes);
         return line;
     }
@@ -50,7 +50,8 @@ public class StowagePlannerTests
         var plan = StowagePlanner.Plan([.. ship.Bays], [.. line.Containers], line);
 
         Assert.That(plan, Is.Not.Null);
-        Assert.That(plan.Values.OrderBy(p => p.Y).Select(p => (p.X, p.Y, p.Z)), Is.EqualTo(new[] { (0, 0, 0), (0, 1, 0) }).AsCollection);
+        Assert.That(plan.Values.OrderBy(p => p.Z).Select(p => (p.X, p.Y, p.Z)),
+            Is.EqualTo([(0, 0, 0), (0, 0, 1)]).AsCollection);
     }
 
     [Test]
@@ -164,5 +165,18 @@ public class StowagePlannerTests
         var b = StowagePlanner.Plan([.. ship.Bays], [.. line.Containers], line);
 
         Assert.That(a, Is.EqualTo(b).AsCollection);
+    }
+
+    [Test]
+    public void FullTower_ContinuesInTheNextColumn()
+    {
+        var ship = OneBayShip(length: 6, width: 4, height: 2);
+        var line = PickedUpLine("Baijini Point", ContainerSize.One, ContainerSize.One, ContainerSize.One);
+
+        var plan = StowagePlanner.Plan([.. ship.Bays], [.. line.Containers], line);
+
+        Assert.That(plan, Is.Not.Null);
+        Assert.That(plan.Values.OrderBy(p => p.Y).ThenBy(p => p.Z).Select(p => (p.X, p.Y, p.Z)),
+            Is.EqualTo([(0, 0, 0), (0, 0, 1), (0, 1, 0)]).AsCollection);
     }
 }

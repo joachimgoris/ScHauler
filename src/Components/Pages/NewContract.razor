@@ -47,6 +47,27 @@
     </div>
 }
 
+@if (_newLocations.Count > 0)
+{
+    <div class="form panel">
+        <p class="new-loc-title">New locations - where are they?</p>
+        @foreach (var name in _newLocations.Keys.ToList())
+        {
+            var key = name;
+            <label>
+                @key
+                <select @bind="_newLocations[key]">
+                    <option value="">Pick a body or system...</option>
+                    @foreach (var body in _bodyNames)
+                    {
+                        <option value="@body">@body</option>
+                    }
+                </select>
+            </label>
+        }
+    </div>
+}
+
 <div class="form-actions">
     <button class="btn-secondary" @onclick="() => _lines.Add(new LineDraft())">+ Add cargo line</button>
     <button class="btn-primary" disabled="@(!CanSave)" @onclick="SaveAsync">Save contract</button>
@@ -91,6 +112,8 @@
     private string _name = "";
     private int _rewardAuec;
     private List<string> _locationNames = [];
+    private List<string> _bodyNames = [];
+    private Dictionary<string, string> _newLocations = new(StringComparer.OrdinalIgnoreCase);
     private string? _error;
 
     private bool CanSave => !string.IsNullOrWhiteSpace(_name) && _lines.Count > 0 && _lines.All(l => l.IsValid);
@@ -100,7 +123,15 @@
         await using var db = await Factory.CreateDbContextAsync();
         _locationNames = await db.Locations
             .AsNoTracking()
+            .Where(l => l.Kind == LocationKind.Site)
             .OrderBy(l => l.Name)
+            .Select(l => l.Name)
+            .ToListAsync();
+        _bodyNames = await db.Locations
+            .AsNoTracking()
+            .Where(l => l.Kind != LocationKind.Site)
+            .OrderBy(l => l.Kind)
+            .ThenBy(l => l.Name)
             .Select(l => l.Name)
             .ToListAsync();
     }
@@ -111,16 +142,41 @@
         try
         {
             await using var db = await Factory.CreateDbContextAsync();
-
-            var contract = Contract.Create(_name, _rewardAuec, Time.GetUtcNow());
-
             var resolved = new Dictionary<string, Location>(StringComparer.OrdinalIgnoreCase);
 
+            var names = _lines.SelectMany(l => new[] { l.Pickup, l.DropOff })
+            .Select(n => n.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+            foreach (var name in names)
+            {
+                if (await TryResolveAsync(db, resolved, name) is null)
+                {
+                    _newLocations.TryAdd(name, "");
+                }
+            }
+
+            _newLocations = _newLocations.Where(kv => names.Contains(kv.Key, StringComparer.OrdinalIgnoreCase)).ToDictionary(kv =>
+kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+            if (_newLocations.Any(kv => string.IsNullOrEmpty(kv.Value)))
+            {
+                _error = "New location(s) found. Pick which body or system they belong to, then save again.";
+                return;
+            }
+
+            // Pass 2: create the new sites under their chosen parents.
+            foreach (var (name, parentName) in _newLocations)
+            {
+                var parent = await db.Locations.FirstAsync(l => l.Name == parentName);
+                resolved[name] = db.Locations.Add(Location.Create(name, LocationKind.Site, parent)).Entity;
+            }
+
+            var contract = Contract.Create(_name, _rewardAuec, Time.GetUtcNow());
             foreach (var draft in _lines)
             {
-                var pickup = await ResolveLocationAsync(db, resolved, draft.Pickup);
-                var dropOff = await ResolveLocationAsync(db, resolved, draft.DropOff);
-                contract.AddLine(draft.Commodity, new Scu(draft.Scu), pickup, dropOff);
+                contract.AddLine(draft.Commodity, new Scu(draft.Scu), resolved[draft.Pickup.Trim()], resolved[draft.DropOff.Trim()]);
             }
 
             db.Contracts.Add(contract);
@@ -137,7 +193,7 @@
         }
     }
 
-    private static async Task<Location> ResolveLocationAsync(HaulerDbContext db, Dictionary<string, Location> cache, string
+    private static async Task<Location?> TryResolveAsync(HaulerDbContext db, Dictionary<string, Location> cache, string
 name)
     {
         var trimmed = name.Trim();
@@ -146,10 +202,12 @@ name)
             return cached;
         }
 
-        var location = await db.Locations.FirstOrDefaultAsync(l => l.Name.ToLower() == trimmed.ToLower()) ??
-db.Locations.Add(Location.Create(trimmed)).Entity;
+        var location = await db.Locations.FirstOrDefaultAsync(l => l.Name.ToLower() == trimmed.ToLower());
+        if (location is not null)
+        {
+            cache[trimmed] = location;
+        }
 
-        cache[trimmed] = location;
         return location;
     }
 }
