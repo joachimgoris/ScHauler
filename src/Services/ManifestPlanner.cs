@@ -1,3 +1,5 @@
+using System.Data;
+using System.Text.RegularExpressions;
 using ScHauler.Models;
 
 namespace ScHauler.Services;
@@ -6,7 +8,7 @@ public sealed record BoxCount(ContainerSize Size, int Count);
 
 public sealed record StopAction(CargoLineId CargoLineId, ActionKind Kind, string Commodity, int Scu, string ContractName, IReadOnlyList<BoxCount> Boxes);
 
-public sealed record LocationStop(string LocationName, IReadOnlyList<StopAction> Actions)
+public sealed record LocationStop(LocationId LocationId, string LocationName, IReadOnlyList<StopAction> Actions)
 {
     public int PickupScu => Actions.Where(a => a.Kind == ActionKind.Pickup).Sum(a => a.Scu);
     public int DeliverScu => Actions.Where(a => a.Kind == ActionKind.Deliver).Sum(a => a.Scu);
@@ -25,11 +27,56 @@ public sealed record HoldView(IReadOnlyList<HoldBayView> Bays, int UnplacedBoxes
 /// </summary>
 public static class ManifestPlanner
 {
+    /// <summary>
+    /// Onboard fraction of capacity at which the tiebreak flips from alphabetical to "free the most SCU first".
+    /// </summary>
+    private const double NearCapacityThreshold = 0.8;
+
+    /// <summary>
+    /// Greedy nearest-first suggestion: repeatedly visit the closest remaining stop (hop distance), simulating onboard SCU per visit. Ties: when near capacity, the stop freeing the most SCU; otherwise alphabetical. Falls back to the alphabetical list when the current location is unknown.
+    /// </summary>
+    public static IReadOnlyList<LocationStop> BuildStops(
+        IEnumerable<CargoLine> lines,
+        RouteNet net,
+        LocationId? currentLocationId,
+        int onboardScu,
+        int capacityScu)
+    {
+        ArgumentNullException.ThrowIfNull(net);
+
+        var stops = BuildStops(lines);
+        if (currentLocationId is null)
+        {
+            return stops;
+        }
+
+        var remaining = stops.ToList();
+        var ordered = new List<LocationStop>(remaining.Count);
+        var position = currentLocationId.Value;
+        var onboard = onboardScu;
+
+        while (remaining.Count > 0)
+        {
+            var nearCapacity = capacityScu > 0 && onboard >= capacityScu * NearCapacityThreshold;
+            var next = remaining.OrderBy(s => net.Hops(position, s.LocationId))
+            .ThenByDescending(s => nearCapacity ? s.DeliverScu : 0)
+            .ThenBy(s => s.LocationName, StringComparer.OrdinalIgnoreCase)
+            .First();
+
+            ordered.Add(next);
+            remaining.Remove(next);
+            position = next.LocationId;
+            onboard = Math.Max(0, onboard - next.DeliverScu) + next.PickupScu;
+        }
+
+        return ordered;
+    }
+
     public static IReadOnlyList<LocationStop> BuildStops(IEnumerable<CargoLine> lines) =>
         lines
             .Where(l => l.Status != CargoLineStatus.Delivered)
             .Select(l => (
-                Location: l.Status == CargoLineStatus.Pending ? l.PickupLocation.Name : l.DropOffLocation.Name,
+                Location: l.Status == CargoLineStatus.Pending ? l.PickupLocation : l.DropOffLocation,
                 Action: new StopAction(
                     l.Id,
                     l.Status == CargoLineStatus.Pending ? ActionKind.Pickup : ActionKind.Deliver,
@@ -37,9 +84,10 @@ public static class ManifestPlanner
                     l.Scu.Value,
                     l.Contract.Name,
                     BoxBreakdown(l))))
-            .GroupBy(x => x.Location)
+            .GroupBy(x => x.Location.Id)
             .Select(g => new LocationStop(
                 g.Key,
+                g.First().Location.Name,
                 g.Select(x => x.Action)
                     .OrderBy(a => a.Kind == ActionKind.Deliver ? 0 : 1)
                     .ThenBy(a => a.ContractName, StringComparer.OrdinalIgnoreCase)

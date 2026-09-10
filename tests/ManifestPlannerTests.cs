@@ -6,6 +6,11 @@ namespace ScHauler.Tests;
 [TestFixture]
 public class ManifestPlannerTests
 {
+
+    private static readonly Dictionary<string, Location> LocationCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private static Location Loc(string name) => LocationCache.TryGetValue(name, out var found) ? found : LocationCache[name] = TestLocations.Site(name);
+
     private static CargoLine Line(
         CargoLineStatus status,
         string pickup = "Everus Harbor",
@@ -16,7 +21,7 @@ public class ManifestPlannerTests
     {
         var boxes = sizes ?? [ContainerSize.Eight, ContainerSize.Two];
         var owner = Contract.Create(contract, 0, DateTimeOffset.UnixEpoch);
-        var line = owner.AddLine(commodity, new Scu(boxes.Sum(s => s.Value)), TestLocations.Site(pickup), TestLocations.Site(dropOff));
+        var line = owner.AddLine(commodity, new Scu(boxes.Sum(s => s.Value)), Loc(pickup), Loc(dropOff));
         if (status is CargoLineStatus.PickedUp or CargoLineStatus.Delivered)
         {
             line.PickUp(boxes);
