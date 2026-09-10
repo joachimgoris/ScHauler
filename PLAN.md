@@ -185,6 +185,12 @@ cancel (hard delete) with confirm step. Two-tap happy path is the bar.
 
 ### B1 — Route ordering (prerequisite for B2)
 
+**Progress: steps 1-3 done (hierarchy+RouteNet, seed+new-location picker,
+greedy stop ordering). ← NEXT: step 4 — Ship.CurrentLocationId, manifest
+current-location selector, implicit set on completed actions, ordered
+stops wired through ManifestService, heuristic named in the UI,
+route-card drop order defaulting to route order.**
+
 **No coordinates, no pathfinding.** `Location.ParentId` hierarchy
 (location → planet/moon → system); hop-based distance: same location 0,
 same body 1, same system 2, cross-system 3.
