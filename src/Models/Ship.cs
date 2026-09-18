@@ -59,15 +59,7 @@ public sealed class Ship
 
     public void SetCapacity(int cargoCapacityScu) => CargoCapacityScu = cargoCapacityScu;
 
-    public void MoveTo(LocationId locationId)
-    {
-        if (locationId == default)
-        {
-            throw new ArgumentException("A location id is required.", nameof(locationId));
-        }
-
-        CurrentLocationId = locationId;
-    }
+    public void MoveTo(LocationId locationId) => CurrentLocationId = locationId;
 
     public ShipBay AddBay(string name, int length, int width, int height, int drawOffsetX, int drawOffsetY)
     {

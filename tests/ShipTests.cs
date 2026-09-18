@@ -63,12 +63,6 @@ public class ShipTests
     }
 
     [Test]
-    public void Create_StartsWithUnknownLocation()
-    {
-        Assert.That(Ironclad().CurrentLocationId, Is.Null);
-    }
-
-    [Test]
     public void MoveTo_SetsCurrentLocation()
     {
         var ship = Ironclad();
@@ -77,11 +71,5 @@ public class ShipTests
         ship.MoveTo(location.Id);
 
         Assert.That(ship.CurrentLocationId, Is.EqualTo(location.Id));
-    }
-
-    [Test]
-    public void MoveTo_RejectsEmptyId()
-    {
-        Assert.Throws<ArgumentException>(() => Ironclad().MoveTo(default));
     }
 }

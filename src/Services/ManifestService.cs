@@ -10,9 +10,7 @@ public sealed record ManifestSnapshot(
     int CapacityScu,
     HoldView Hold,
     LocationId? CurrentLocationId,
-    IReadOnlyList<LocationOption> Locations);
-
-public sealed record LocationOption(LocationId Id, string Name);
+    IReadOnlyList<Location> Locations);
 
 public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
 {
@@ -42,7 +40,7 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
             capacityScu,
             ManifestPlanner.BuildHoldView(bays, aboard),
             ship?.CurrentLocationId,
-            BuildLocationOptions(locations));
+            [.. locations.Where(l => l.Kind == LocationKind.Site).OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase)]);
     }
 
     public async Task AdvanceAsync(CargoLineId cargoLineId)
@@ -130,10 +128,4 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
         ship.MoveTo(locationId);
         await db.SaveChangesAsync();
     }
-
-    private static List<LocationOption> BuildLocationOptions(IEnumerable<Location> locations) =>
-        [.. locations
-            .Where(l => l.Kind == LocationKind.Site)
-            .OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(l => new LocationOption(l.Id, l.Name))];
 }
