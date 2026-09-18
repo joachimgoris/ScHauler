@@ -17,6 +17,11 @@ public sealed class ShipConfiguration : IEntityTypeConfiguration<Ship>
             .HasForeignKey(b => b.ShipId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        builder.HasOne<Location>()
+            .WithMany()
+            .HasForeignKey(s => s.CurrentLocationId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         builder.Navigation(s => s.Bays)
             .UsePropertyAccessMode(PropertyAccessMode.Field)
             .AutoInclude();

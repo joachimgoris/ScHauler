@@ -1,4 +1,3 @@
-using Microsoft.VisualStudio.TestPlatform.Common.Utilities;
 using ScHauler.Models;
 
 namespace ScHauler.Tests;
@@ -61,5 +60,28 @@ public class ShipTests
     public void AddBay_RejectsNegativeOffsets()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => Ironclad().AddBay("Bad bay", 20, 6, 6, -1, 0));
+    }
+
+    [Test]
+    public void Create_StartsWithUnknownLocation()
+    {
+        Assert.That(Ironclad().CurrentLocationId, Is.Null);
+    }
+
+    [Test]
+    public void MoveTo_SetsCurrentLocation()
+    {
+        var ship = Ironclad();
+        var location = TestLocations.Site("Everus Harbor");
+
+        ship.MoveTo(location.Id);
+
+        Assert.That(ship.CurrentLocationId, Is.EqualTo(location.Id));
+    }
+
+    [Test]
+    public void MoveTo_RejectsEmptyId()
+    {
+        Assert.Throws<ArgumentException>(() => Ironclad().MoveTo(default));
     }
 }

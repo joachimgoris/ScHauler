@@ -15,6 +15,16 @@
             </small>
         </span>
     </div>
+    <label class="cap-here">
+        <span class="cap-label">Docked at</span>
+        <select class="cap-select" @bind="_currentLocation" @bind:after="SaveCurrentLocationAsync">
+            <option value="" disabled>Where are you?</option>
+            @foreach (var location in _locations)
+            {
+                <option value="@location.Id.Value">@location.Name</option>
+            }
+        </select>
+    </label>
     @if (_capacityScu > 0)
     {
         <div class="cap-track" role="progressbar" aria-valuenow="@_onboardScu" aria-valuemin="0"
@@ -29,8 +39,8 @@
 </div>
 <div class="manifest-body">
     <HoldView Hold="_hold" Colors="_colors" Isolated="@_isolated" OnToggleIsolate="ToggleIsolate" />
-    <RouteManifest Stops="_stops" Hold="_hold" DropOrder="_dropOrder" Colors="_colors"
-                   Isolated="@_isolated" OnToggleIsolate="ToggleIsolate" OnMove="MoveStop" OnDeliver="DeliverAsync" />
+    <RouteManifest Stops="_stops" Hold="_hold" DropOrder="_dropOrder" Colors="_colors" Isolated="@_isolated"
+                   OnToggleIsolate="ToggleIsolate" OnMove="MoveStop" OnDeliver="DeliverAsync" />
 </div>
 
 @if (_stops.Count == 0)
@@ -116,6 +126,9 @@
     private IReadOnlyList<LocationStop> _stops = [];
     private int _onboardScu;
     private int _capacityScu;
+    private IReadOnlyList<LocationOption> _locations = [];
+    private string _currentLocation = "";
+    private bool _manualDropOrder;
 
     private int FillPercent => _capacityScu <= 0
         ? 0
@@ -130,22 +143,23 @@
         _onboardScu = snapshot.OnboardScu;
         _capacityScu = snapshot.CapacityScu;
         _hold = snapshot.Hold;
+        _locations = snapshot.Locations;
+        _currentLocation = snapshot.CurrentLocationId?.Value.ToString() ?? "";
         SyncDropOrder();
     }
 
-    // Drop order is user-controlled (design: stops[]); session-local until
-    // Phase B1 provides a computed default route order.
+    // Route order is the default; a manual ▲/▼ pins the list until the ship moves.
     private void SyncDropOrder()
     {
-        var current = _stops
+        var routeOrder = _stops
             .Where(s => s.Actions.Any(a => a.Kind == ActionKind.Deliver))
             .Select(s => s.LocationName)
             .ToList();
 
-        _dropOrder = _dropOrder
-            .Where(d => current.Contains(d, StringComparer.OrdinalIgnoreCase))
-            .Concat(current.Where(c => !_dropOrder.Contains(c, StringComparer.OrdinalIgnoreCase)))
-            .ToList();
+        _dropOrder = _manualDropOrder
+            ? [.. _dropOrder.Where(d => routeOrder.Contains(d, StringComparer.OrdinalIgnoreCase)),
+            .. routeOrder.Where(c => !_dropOrder.Contains(c, StringComparer.OrdinalIgnoreCase))]
+            : routeOrder;
 
         _colors = _dropOrder
             .Select((name, index) => (name, Color: DestinationColors[index % DestinationColors.Length]))
@@ -157,6 +171,7 @@
 
     private void MoveStop((string Dest, int Delta) move)
     {
+        _manualDropOrder = true;
         var from = _dropOrder.FindIndex(d => string.Equals(d, move.Dest, StringComparison.OrdinalIgnoreCase));
         var to = from + move.Delta;
         if (from < 0 || to < 0 || to >= _dropOrder.Count)
@@ -193,6 +208,18 @@
 
         await ManifestService.PickUpAsync(cargoLineId, sizes);
         _pickingUp = null;
+        await RefreshAsync();
+    }
+
+    private async Task SaveCurrentLocationAsync()
+    {
+        if (!Guid.TryParse(_currentLocation, out var guid))
+        {
+            return;
+        }
+
+        await ManifestService.SetCurrentLocationAsync(new LocationId(guid));
+        _manualDropOrder = false;
         await RefreshAsync();
     }
 }

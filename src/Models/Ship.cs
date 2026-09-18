@@ -50,9 +50,24 @@ public sealed class Ship
         }
     }
 
+    /// <summary>
+    /// Where the ship is parked right now. Null = unknown; the planner then falls back to the alphabetical stop list.
+    /// </summary>
+    public LocationId? CurrentLocationId { get; private set; }
+
     public static Ship Create(string name, int cargoCapacityScu = 0) => new(ShipId.New(), name, cargoCapacityScu);
 
     public void SetCapacity(int cargoCapacityScu) => CargoCapacityScu = cargoCapacityScu;
+
+    public void MoveTo(LocationId locationId)
+    {
+        if (locationId == default)
+        {
+            throw new ArgumentException("A location id is required.", nameof(locationId));
+        }
+
+        CurrentLocationId = locationId;
+    }
 
     public ShipBay AddBay(string name, int length, int width, int height, int drawOffsetX, int drawOffsetY)
     {

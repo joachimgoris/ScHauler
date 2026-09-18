@@ -4,7 +4,15 @@ using ScHauler.Models;
 
 namespace ScHauler.Services;
 
-public sealed record ManifestSnapshot(IReadOnlyList<LocationStop> Stops, int OnboardScu, int CapacityScu, HoldView Hold);
+public sealed record ManifestSnapshot(
+    IReadOnlyList<LocationStop> Stops,
+    int OnboardScu,
+    int CapacityScu,
+    HoldView Hold,
+    LocationId? CurrentLocationId,
+    IReadOnlyList<LocationOption> Locations);
+
+public sealed record LocationOption(LocationId Id, string Name);
 
 public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
 {
@@ -24,11 +32,17 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
         var bays = ship?.Bays.OrderBy(b => b.DrawOffsetX).ThenBy(b => b.DrawOffsetY).ToList() ?? [];
         var aboard = lines.Where(l => l.Status == CargoLineStatus.PickedUp).SelectMany(l => l.Containers);
 
+        var locations = await db.Locations.AsNoTracking().ToListAsync();
+        var onboardScu = ManifestPlanner.OnboardScu(lines);
+        var capacityScu = ship?.CargoCapacityScu ?? 0;
+
         return new ManifestSnapshot(
-            ManifestPlanner.BuildStops(lines),
-            ManifestPlanner.OnboardScu(lines),
-            ship?.CargoCapacityScu ?? 0,
-            ManifestPlanner.BuildHoldView(bays, aboard));
+            ManifestPlanner.BuildStops(lines, RouteNet.From(locations), ship?.CurrentLocationId, onboardScu, capacityScu),
+            onboardScu,
+            capacityScu,
+            ManifestPlanner.BuildHoldView(bays, aboard),
+            ship?.CurrentLocationId,
+            BuildLocationOptions(locations));
     }
 
     public async Task AdvanceAsync(CargoLineId cargoLineId)
@@ -43,6 +57,10 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
         }
 
         line.Advance();
+
+        var ship = await db.Ships.OrderBy(s => s.Name).FirstOrDefaultAsync();
+        ship?.MoveTo(line.DropOffLocationId);
+
         await db.SaveChangesAsync();
     }
 
@@ -82,6 +100,7 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
         var ship = await db.Ships.OrderBy(s => s.Name).FirstOrDefaultAsync();
         if (ship is not null)
         {
+            ship.MoveTo(line.PickupLocationId);
             var bays = ship.Bays.OrderBy(b => b.DrawOffsetX).ThenBy(b => b.DrawOffsetY).ToList();
             var aboardOthers = await db.CargoLines.Where(l => l.Status == CargoLineStatus.PickedUp && l.Id != cargoLineId).ToListAsync();
 
@@ -98,4 +117,23 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
 
         await db.SaveChangesAsync();
     }
+
+    public async Task SetCurrentLocationAsync(LocationId locationId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var ship = await db.Ships.OrderBy(s => s.Name).FirstOrDefaultAsync();
+        if (ship is null)
+        {
+            return;
+        }
+
+        ship.MoveTo(locationId);
+        await db.SaveChangesAsync();
+    }
+
+    private static List<LocationOption> BuildLocationOptions(IEnumerable<Location> locations) =>
+        [.. locations
+            .Where(l => l.Kind == LocationKind.Site)
+            .OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(l => new LocationOption(l.Id, l.Name))];
 }
