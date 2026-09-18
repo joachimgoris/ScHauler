@@ -37,20 +37,6 @@ public sealed class RouteNet
 
     private LocationId? Parent(LocationId id) => _parents.GetValueOrDefault(id);
 
-    private LocationId? Root(LocationId id)
-    {
-        var current = id;
-        for (int depth = 0; depth < 3; depth++)
-        {
-            var parent = Parent(current);
-            if (parent is null)
-            {
-                return current;
-            }
-
-            current = parent.Value;
-        }
-
-        return current;
-    }
+    // Site -> Body -> System, never deeper (Location.Create enforces it).
+    private LocationId? Root(LocationId id) => Parent(id) is { } parent ? Parent(parent) ?? parent : id;
 }
