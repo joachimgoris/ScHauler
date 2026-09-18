@@ -185,11 +185,13 @@ cancel (hard delete) with confirm step. Two-tap happy path is the bar.
 
 ### B1 — Route ordering (prerequisite for B2)
 
-**Progress: steps 1-3 done (hierarchy+RouteNet, seed+new-location picker,
-greedy stop ordering). ← NEXT: step 4 — Ship.CurrentLocationId, manifest
-current-location selector, implicit set on completed actions, ordered
-stops wired through ManifestService, heuristic named in the UI,
-route-card drop order defaulting to route order.**
+**Progress: ✓ COMPLETE 2026-09-18. Steps 1-4 done (hierarchy+RouteNet,
+seed+new-location picker, greedy stop ordering, and step 4:
+Ship.CurrentLocationId, the manifest "Docked at" selector, implicit set on
+pickup/deliver, ordered stops through ManifestService, route-card drop order
+defaulting to route order). Dropped deliberately on a laziness pass: the UI
+label naming the heuristic and a reset-to-route button — the ▲/▼ steppers
+already cover reordering. ← NEXT: B2 suggested stow.**
 
 **No coordinates, no pathfinding.** `Location.ParentId` hierarchy
 (location → planet/moon → system); hop-based distance: same location 0,
