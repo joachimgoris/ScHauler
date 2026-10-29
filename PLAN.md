@@ -129,6 +129,59 @@ lines by location. Only ship in use: **Drake Ironclad**.
   pile spreads, building a wall outward from the ramp. Was layer-first;
   changed on field feedback (multiple 1 SCU boxes should stack, not carpet).
 
+### 2026-10-21 — B2 breakdown decided
+
+- **Forecast regions are cell sets, not rectangles.** Output is
+  `destination → set of (bay, x, y, z)`; the planner consumes it as a
+  membership test, the UI projects it top-down. No region geometry type.
+- **Depth = `DrawOffsetX + x`** everywhere (forecaster, stow check). The
+  draw offset already encodes "cells from ramp" for the ruler, so it is the
+  one honest cross-bay depth.
+- **Clearance = skip to the next full depth slice** between destinations.
+  Coarse but guarantees the planner can honor the region.
+- **Drop order is page state, passed to the service per call**, never
+  persisted (data is disposable; route order is the default anyway).
+- **Ghosts always on, no AS LOADED/SUGGESTED STOW toggle** until field use
+  says otherwise.
+
+### 2026-10-21 (afternoon) — the hold has a hard edge
+
+Field run with a 900 SCU contract on top of 1,122 SCU aboard + 192 pending:
+
+- **Restow when the incremental plan fails** (`StowagePlanner.Repack`):
+  every aboard box is re-planned from an empty hold, lines in drop order so
+  earlier drops end nearest the ramp. Supersedes "placements are frozen"
+  for this one case; the manifest shows "RESTOW — N box(es) already aboard
+  changed place" so Joachim reloads to match.
+- **Capacity is a gate, twice.** A contract whose SCU would exceed the hold
+  next to what is aboard or pending is not accepted (NewContract guard). A
+  pickup that would exceed capacity, or whose boxes do not fit even after a
+  restow, is refused: nothing saved, line stays pending, "NOT LOADED" note.
+  Supersedes "boxes stay unplaced with a note" - unplaced boxes can now only
+  come from data corrected by hand on the contracts page.
+- Geometry beats SCU: 2,022 SCU in 32-SCU boxes does not fit a 2,160 hold
+  (61 boxes, 54 slots). The accept-time guard is SCU-only because box sizes
+  are unknown until pickup; the dock-time refusal is the geometric truth.
+- **Tiered stow** (same day, after measuring): with the 1-cell moat between
+  destinations, a sixth destination next to 1,122 SCU got at most 72 SCU
+  whatever the box size - six moated piles fragment four bays. So the moat
+  is kept only while there is room: pickup tries *incremental with moat >
+  incremental touching > restow with moat > restow touching*, and the
+  manifest says "TIGHT STOW" when piles touch. Stacking across destinations
+  stays forbidden (support rule). `allowTouching` on `Plan`/`Repack`.
+- **Burial is per bay (2026-10-29).** The walkway reaches every bay, so
+  forward-bay cargo never buries aft-bay cargo. The stow check, the
+  planner's "don't sit in front of an earlier drop" rule and the
+  forecaster's frontier cap all compare X within one bay and lane, never
+  canvas-wide. Removed three false "buried behind Seraphim" warnings on the
+  restowed 1,794 SCU load.
+- **What the Ironclad takes, measured on the 1,314 SCU / 7-drop load that
+  Joachim set up by hand**: a further line maxes at 480 SCU as 16s, 504 as
+  8s or 4s, 648 as 1s (tight restow). A 700 SCU line does not fit with any
+  real box mix; the dock refuses it in ~250 ms. The waste is inherent to
+  32-SCU boxes (8 long in 20- and 10-long bays: 54 slots = 1,728 SCU) plus
+  own-destination-only support above partial towers.
+
 ### Pending decisions (recommendation noted; confirm when reached)
 
 - **Container edit rules** — implemented: add/remove only while Pending,
@@ -181,17 +234,17 @@ cancel (hard delete) with confirm step. Two-tap happy path is the bar.
    stack-height badge (×N). Pickup flow unchanged (plan recomputes and
    redraws). Manual drag-to-override is explicitly v2.
 
-## Phase B — Route ordering + suggested stow (← NEXT)
+## Phase B — Route ordering + suggested stow (✓ COMPLETE 2026-10-21)
 
 ### B1 — Route ordering (prerequisite for B2)
 
-**Progress: ✓ COMPLETE 2026-09-18. Steps 1-4 done (hierarchy+RouteNet,
+**Progress: ✓ COMPLETE 2026-09-18 (B2 ✓ 2026-10-21). Steps 1-4 done (hierarchy+RouteNet,
 seed+new-location picker, greedy stop ordering, and step 4:
 Ship.CurrentLocationId, the manifest "Docked at" selector, implicit set on
 pickup/deliver, ordered stops through ManifestService, route-card drop order
 defaulting to route order). Dropped deliberately on a laziness pass: the UI
 label naming the heuristic and a reset-to-route button — the ▲/▼ steppers
-already cover reordering. ← NEXT: B2 suggested stow.**
+already cover reordering.**
 
 **No coordinates, no pathfinding.** `Location.ParentId` hierarchy
 (location → planet/moon → system); hop-based distance: same location 0,
@@ -207,15 +260,200 @@ same body 1, same system 2, cross-system 3.
 
 ### B2 — Suggested stow (the design bundle's remaining scope)
 
-- `StowageForecaster`: pure, recomputed (never stored) — reserves regions
-  per destination from SCU totals (1 SCU = 1 cell, exact), ramp-outward in
-  drop order, contiguous per destination, frontier no-backfill (design
-  packer rules). Pending lines only; frozen placements are immovable input.
-- StowagePlanner honors the destination's reservation as a soft preference
-  at pickup (try region first, greedy fallback).
-- UI: SUGGESTED STOW toggle, stow check note (min-X per stop vs drop order),
-  ghost regions for pending cargo, route & manifest column with ▲/▼ drop
-  order, capacity legend + segments, stop-number badges.
+**Progress: ✓ steps 1-5 implemented 2026-10-21 (Claude wrote the code at
+Joachim's request — exception to the working agreement), 99 tests green,
+verified in the browser with a two-contract run. Three deviations from the
+breakdown below, each learned from the live run:**
+
+- **Planner preference is "fewest cells outside the region", not "all
+  inside"** — a one-slice slab can never contain an 8-long box, so the
+  strict rule sent the 32 SCU box to the ramp. Fewest-outside pulls it to
+  the slab's deep edge instead (`OversizedBox_IsPulledToTheReservedRegionsEdge`).
+- **Drop order runs the route heuristic over every drop-off, aboard or
+  pending** (`DropOrder(lines, net, current, onboard, capacity, manual)`),
+  not "deliver stops first, pending alphabetical" — that rule flipped the
+  order the moment a line was picked up, which made the forecast lie.
+- **Forecaster frontier**: a region never goes deeper than one clearance
+  slice short of cargo already aboard for a *later* drop; **stow check is
+  lane-aware** (only overlapping canvas-Y lanes can bury each other), so
+  side-by-side stacks are not flagged.
+
+Field run with 200-500 SCU contracts (same day, five contracts, 1,122 SCU
+aboard) added two planner/forecaster rules and one check:
+
+- **Planner never sits in front of an earlier drop's cargo when any other
+  spot exists** (`Plan(..., dropOrder)`; ranking key is now *buries,
+  outside, touches-own-pile, position*). Depth and lanes use the same
+  canvas convention as the stow check.
+- **Forecaster frontier falls back when the cap excludes everything** -
+  later-drop cargo already in the frontmost row (depth 0 is the row nearest
+  the ramp; the ramp itself is never blocked by hold cargo) must not zero
+  the forecast; the stow check already reports that layout.
+- **Timing guard**: 15 x 32 SCU boxes into an empty Ironclad plan in ~100
+  ms (`FifteenLargeBoxes_PlanWithinATabletTap`, bound 500 ms). A 6.8 s
+  figure seen once was browser-harness latency, not the app (41-96 ms end
+  to end when measured from the click).
+
+Observed, by design: a multi-line contract is just N destinations (lines
+merge into existing destinations by drop-off); same-body sites (New
+Babbage, Port Tressler, the microTech depots) come out consecutive in the
+drop order because they are 1 hop apart. Each site still gets its own slab
+plus a clearance slice - with five drops around one body that costs up to
+4 x 72 cells; the `ponytail:` halo note in step 1 is the upgrade path.
+
+Remaining: none for B2. `tests/e2e/suggested-stow.mjs` is written in the
+style of the other scripts but needs `playwright` installed to run.
+
+Order was: 1 → 2 → 3 → 4 → 5; build stayed green after each. Steps 1, 2 and
+4 are pure + NUnit (tests first, `StowagePlannerTests`/`StopOrderingTests`
+helpers were the template).
+
+#### Shared vocabulary
+
+- **Depth** of a cell = `bay.DrawOffsetX + x` (ruler cells from the ramp).
+  Aft bays sit at offset 21, so depth is already global across bays — no
+  new geometry needed.
+- **Cell key** = the planner's existing `(ShipBayId, X, Y, Z)` tuple.
+- **Drop order** = destinations in delivery sequence, first delivered first.
+  Covers every drop-off of a non-delivered line (aboard *and* pending).
+
+#### 1. `StowageForecaster` (Services/, pure, EF-free, TDD)
+
+```csharp
+public sealed record StowForecast(
+    IReadOnlyDictionary<LocationId, IReadOnlySet<(ShipBayId BayId, int X, int Y, int Z)>> Regions,
+    int UnreservedScu);
+
+public static StowForecast Forecast(
+    IReadOnlyList<ShipBay> bays,
+    IReadOnlyList<CargoContainer> aboard,   // frozen placements = immovable
+    IReadOnlyList<CargoLine> pending,       // Pending status only; others ignored
+    IReadOnlyList<LocationId> dropOrder);
+```
+
+Algorithm (the design packer: last stop deepest, contiguous, no backfill):
+
+1. Free cells = every bay cell minus cells covered by `aboard` placements
+   (reuse the planner's `Cells` enumeration — make it `internal static`
+   rather than copying it).
+2. Walk free cells once in **(depth desc, bay index, Y, Z)** order — Z
+   innermost so a destination fills towers before spreading, matching the
+   2026-09-09 field decision.
+3. For destinations in **reverse drop order**, take `sum(pending SCU for
+   that destination)` cells off the walk (1 SCU = 1 cell, exact). A
+   destination with no pending SCU gets no region.
+4. **Clearance**: after a destination's last cell, skip the rest of that
+   depth slice plus one full slice before the next destination starts. This
+   is what keeps the planner's "different destinations never touch" rule
+   satisfiable at the border. `ponytail:` wastes ≤2 slices (≤144 cells) per
+   boundary; tighten to a 1-cell halo if the hold ever runs short.
+5. When the walk runs out, remaining SCU accumulates in `UnreservedScu`
+   (UI shows "forecast short by N SCU").
+
+Never stored; recomputed on every manifest read. Deterministic by
+construction (single pass over a fixed order).
+
+Tests (all on a `OneBayShip`-style fixture; extend with a two-bay fixture
+whose second bay has a larger `DrawOffsetX`):
+
+- `LastDrop_GetsTheDeepestCells`
+- `FirstDrop_EndsNearestTheRamp`
+- `Regions_AreContiguousInWalkOrder` (no gaps inside one region)
+- `Destinations_AreSeparatedByAClearanceSlice`
+- `FrozenPlacements_AreNeverReserved`
+- `Region_FillsATowerBeforeSpreading` (Z before Y)
+- `PendingOnly_PickedUpLinesAreIgnored`
+- `Overflow_ReportsUnreservedScu`
+- `Forecast_IsDeterministic`
+
+#### 2. Planner honors the reservation (soft preference)
+
+- `StowagePlanner.Plan` gains one optional parameter:
+  `IReadOnlySet<(ShipBayId, int, int, int)>? reserved = null` — the picked-up
+  line's own region from the forecast (null = today's behavior).
+- `FindBest` key becomes `(InRegion, TouchesOwnPile, bay, x, y, z, rotated)`
+  where `InRegion = 0` when every cell of the candidate lies in `reserved`.
+  Everything else unchanged — greedy fallback is the existing search.
+- Tests: `ReservedRegion_IsPreferred_OverTheOrigin`,
+  `ReservedRegion_IsSkipped_WhenTheBoxDoesNotFitIt` (falls back, never
+  returns null just because the region is too small),
+  `NullReservation_BehavesAsBefore` (run the existing determinism test with
+  `reserved: null` — no new test needed if the parameter is optional).
+
+#### 3. Drop order crosses the service boundary
+
+Today `_dropOrder` lives in `Manifest.razor` as location *names* derived
+from deliver stops only; pending-only destinations are invisible. B2 needs
+ids, all destinations, and the service needs the order at pickup time.
+
+- `ManifestPlanner.DefaultDropOrder(stops, lines) → IReadOnlyList<(LocationId Id, string Name)>`:
+  deliver stops in route order first, then pending-only drop-offs
+  alphabetically. `ponytail:` alphabetical tail; sort it by hops from the
+  last stop if it ever picks a silly order in the field. One test:
+  `DefaultDropOrder_RouteStopsFirst_ThenPendingDestinationsAlphabetical`.
+- `ManifestSnapshot` gains `Destinations` (that list) and `Forecast`
+  (`StowForecast`) and `StowCheck` (step 4).
+- `GetManifestAsync(IReadOnlyList<LocationId>? dropOrder = null)`: null →
+  default order; a manual order from the page is used as-is, with any
+  destination missing from it appended in default order (same merge the
+  page does today in `SyncDropOrder`, moved into the planner so it is
+  tested once).
+- `PickUpAsync(cargoLineId, sizes, IReadOnlyList<LocationId>? dropOrder)`:
+  runs the forecast on the *other* pending lines plus this line's
+  destination, then passes `forecast.Regions[line.DropOffLocationId]` to
+  `StowagePlanner.Plan` as `reserved`.
+- Page: `_dropOrder` becomes `List<LocationId>`; names come from
+  `snapshot.Destinations`. `RouteManifest`/`HoldView` keep taking names +
+  colors — map at the page edge. ▲/▼ now calls `RefreshAsync()` with the
+  manual order so ghosts and the stow check redraw (one local SQLite read,
+  fine on the tablet). `_manualDropOrder` reset on `MoveTo` stays.
+
+#### 4. Stow check (pure, in `ManifestPlanner`)
+
+```csharp
+public sealed record StowConflict(string BlockedDropOff, string BlockingDropOff);
+public static IReadOnlyList<StowConflict> StowCheck(IEnumerable<CargoContainer> aboard, IReadOnlyList<Location> dropOrder);
+```
+
+For each destination with boxes aboard, take `minDepth` over its boxes. A
+conflict is an earlier drop whose `minDepth` is **greater** than a later
+drop's — the earlier cargo is buried behind cargo that leaves later. Report
+each pair once; empty list = "stow matches drop order". Depth uses the same
+`DrawOffsetX + x` formula as the forecaster. Tests:
+`StowCheck_Empty_WhenStowMatchesDropOrder`,
+`StowCheck_FlagsEarlierDropBuriedBehindLaterDrop`,
+`StowCheck_IgnoresUnplacedBoxes`.
+
+#### 5. UI (Manifest.razor, RouteManifest.razor, HoldView.razor)
+
+Protanopia rule holds: every new signal is text or a number, color is
+secondary.
+
+- **Ghost regions**: `HoldView` gets a `Ghosts` parameter — per bay, per
+  destination, the top-down footprint (distinct X,Y of the region's cells)
+  with the tower height as a `hN` badge, drawn as dashed outlines in the
+  destination color *under* the real boxes. Isolate applies to ghosts too.
+  `ponytail:` no AS LOADED / SUGGESTED STOW toggle — ghosts are always on;
+  add the toggle only if they clutter the hold in the field.
+- **Stop-number badges**: `1`, `2`, … from drop order on every real stack
+  and ghost and on each route card. This also retires the 2026-09-07
+  protanopia caveat on the four-color pool.
+- **Route & manifest column**: route cards now include pending-only
+  destinations (greyed row count "0 aboard · N SCU pending"); ▲/▼ unchanged.
+- **Capacity bar**: per-destination segments in drop order (aboard SCU
+  solid, pending SCU hatched) + legend chips "1 Lorville 48/120".
+- **Notes** under the hold: stow check conflicts as text ("Lorville (drop 1)
+  is buried behind Baijini Point (drop 2)") and the forecast shortfall
+  ("Suggested stow short by N SCU").
+- E2E: one happy-path run — accept two contracts with different drop-offs,
+  pick both up, verify the second's boxes land in its ghost region and the
+  stow check is clean; swap the drop order with ▲/▼ and verify the note
+  appears.
+
+#### Explicitly out of B2
+
+Manual drag-to-override, persisted drop order, a global repack, forecasting
+rotated footprints (regions are cells, boxes still rotate at pickup).
 
 ## Definition of done, all phases
 

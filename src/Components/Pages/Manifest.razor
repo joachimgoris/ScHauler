@@ -27,20 +27,42 @@
     </label>
     @if (_capacityScu > 0)
     {
-        <div class="cap-track" role="progressbar" aria-valuenow="@_onboardScu" aria-valuemin="0"
+        <div class="cap-track @(_onboardScu > _capacityScu ? "over" : null)" role="progressbar" aria-valuenow="@_onboardScu" aria-valuemin="0"
              aria-valuemax="@_capacityScu">
-            <div class="cap-fill @(_onboardScu > _capacityScu ? "over" : null)" style="width: @(FillPercent)%"></div>
+            @foreach (var d in _destinations)
+            {
+                <div class="cap-seg" style="--c: @_colors[d.Name]; width: @(Percent(d.AboardScu))%"></div>
+                <div class="cap-seg cap-seg-pending" style="--c: @_colors[d.Name]; width: @(Percent(d.PendingScu))%"></div>
+            }
         </div>
+        @if (_destinations.Count > 0)
+        {
+            <ul class="cap-legend">
+                @foreach (var (d, index) in _destinations.Select((d, i) => (d, i)))
+                {
+                    <li class="cap-chip" style="--c: @_colors[d.Name]">
+                        <span class="route-stop-badge num">@(index + 1)</span>
+                        <span>@d.Name</span>
+                        <span class="cap-chip-scu num">@d.AboardScu<small>/@(d.AboardScu + d.PendingScu) SCU</small></span>
+                    </li>
+                }
+            </ul>
+        }
         @if (_onboardScu > _capacityScu)
         {
             <p class="cap-warning">Overloaded by @(_onboardScu - _capacityScu) SCU</p>
         }
     }
 </div>
+@if (_pickUpNote is not null)
+{
+    <p class="pickup-note panel" role="status">@_pickUpNote</p>
+}
 <div class="manifest-body">
-    <HoldView Hold="_hold" Colors="_colors" Isolated="@_isolated" OnToggleIsolate="ToggleIsolate" />
-    <RouteManifest Stops="_stops" Hold="_hold" DropOrder="_dropOrder" Colors="_colors" Isolated="@_isolated"
-                   OnToggleIsolate="ToggleIsolate" OnMove="MoveStop" OnDeliver="DeliverAsync" />
+    <HoldView Hold="_hold" Colors="_colors" Destinations="_destinations" Conflicts="_conflicts" UnreservedScu="_unreservedScu"
+              Isolated="@_isolated" OnToggleIsolate="ToggleIsolate" />
+    <RouteManifest Stops="_stops" Hold="_hold" Destinations="_destinations" Colors="_colors" Isolated="@_isolated"
+                   OnToggleIsolate="ToggleIsolate" OnMove="MoveStopAsync" OnDeliver="DeliverAsync" />
 </div>
 
 @if (_stops.Count == 0)
@@ -111,15 +133,19 @@
 @code {
     private CargoLineId? _pickingUp;
     private Dictionary<ContainerSize, int> _pickUpCounts = [];
-    private Services.HoldView _hold = new([], 0);
+    private Services.HoldView _hold = new([], 0, []);
 
     // Design token pool; assigned to destinations in drop order, stable everywhere.
     private static readonly string[] DestinationColors =
         ["#a78bfa", "#6cb8e8", "#5fd0a8", "#f87171", "#a3e635", "#fb923c"];
 
     private string? _isolated;
-    private List<string> _dropOrder = [];
+    private IReadOnlyList<Destination> _destinations = [];
+    private List<LocationId> _dropOrder = [];
     private Dictionary<string, string> _colors = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<StowConflict> _conflicts = [];
+    private int _unreservedScu;
+    private string? _pickUpNote;
 
     private int PickupTotal => _pickUpCounts.Sum(kv => kv.Key.Value * kv.Value);
 
@@ -130,49 +156,37 @@
     private string _currentLocation = "";
     private bool _manualDropOrder;
 
-    private int FillPercent => _capacityScu <= 0
+    private int Percent(int scu) => _capacityScu <= 0
         ? 0
-        : Math.Min(100, (int)Math.Round(_onboardScu * 100.0 / _capacityScu));
+        : Math.Min(100, (int)Math.Round(scu * 100.0 / _capacityScu));
 
     protected override Task OnInitializedAsync() => RefreshAsync();
 
+    // Route order is the default; a manual ▲/▼ pins the list until the ship moves. The service merges the two.
     private async Task RefreshAsync()
     {
-        var snapshot = await ManifestService.GetManifestAsync();
+        var snapshot = await ManifestService.GetManifestAsync(_manualDropOrder ? _dropOrder : null);
         _stops = snapshot.Stops;
         _onboardScu = snapshot.OnboardScu;
         _capacityScu = snapshot.CapacityScu;
         _hold = snapshot.Hold;
         _locations = snapshot.Locations;
         _currentLocation = snapshot.CurrentLocationId?.Value.ToString() ?? "";
-        SyncDropOrder();
-    }
-
-    // Route order is the default; a manual ▲/▼ pins the list until the ship moves.
-    private void SyncDropOrder()
-    {
-        var routeOrder = _stops
-            .Where(s => s.Actions.Any(a => a.Kind == ActionKind.Deliver))
-            .Select(s => s.LocationName)
-            .ToList();
-
-        _dropOrder = _manualDropOrder
-            ? [.. _dropOrder.Where(d => routeOrder.Contains(d, StringComparer.OrdinalIgnoreCase)),
-            .. routeOrder.Where(c => !_dropOrder.Contains(c, StringComparer.OrdinalIgnoreCase))]
-            : routeOrder;
-
-        _colors = _dropOrder
-            .Select((name, index) => (name, Color: DestinationColors[index % DestinationColors.Length]))
-            .ToDictionary(x => x.name, x => x.Color, StringComparer.OrdinalIgnoreCase);
+        _destinations = snapshot.Destinations;
+        _dropOrder = [.. _destinations.Select(d => d.Id)];
+        _unreservedScu = snapshot.UnreservedScu;
+        _colors = _destinations
+            .Select((d, index) => (d.Name, Color: DestinationColors[index % DestinationColors.Length]))
+            .ToDictionary(x => x.Name, x => x.Color, StringComparer.OrdinalIgnoreCase);
+        _conflicts = ManifestPlanner.StowCheck(_hold, [.. _destinations.Select(d => d.Name)]);
     }
 
     private void ToggleIsolate(string dest) =>
         _isolated = string.Equals(_isolated, dest, StringComparison.OrdinalIgnoreCase) ? null : dest;
 
-    private void MoveStop((string Dest, int Delta) move)
+    private async Task MoveStopAsync((LocationId Id, int Delta) move)
     {
-        _manualDropOrder = true;
-        var from = _dropOrder.FindIndex(d => string.Equals(d, move.Dest, StringComparison.OrdinalIgnoreCase));
+        var from = _dropOrder.IndexOf(move.Id);
         var to = from + move.Delta;
         if (from < 0 || to < 0 || to >= _dropOrder.Count)
         {
@@ -180,7 +194,8 @@
         }
 
         (_dropOrder[from], _dropOrder[to]) = (_dropOrder[to], _dropOrder[from]);
-        SyncDropOrder();
+        _manualDropOrder = true;
+        await RefreshAsync();
     }
 
     private async Task SaveCapacityAsync()
@@ -191,6 +206,7 @@
 
     private async Task DeliverAsync(CargoLineId cargoLineId)
     {
+        _pickUpNote = null;
         await ManifestService.AdvanceAsync(cargoLineId);
         await RefreshAsync();
     }
@@ -206,7 +222,15 @@
     {
         var sizes = ContainerSize.All.SelectMany(s => Enumerable.Repeat(s, _pickUpCounts.GetValueOrDefault(s))).ToList();
 
-        await ManifestService.PickUpAsync(cargoLineId, sizes);
+        var result = await ManifestService.PickUpAsync(cargoLineId, sizes, _manualDropOrder ? _dropOrder : null);
+        _pickUpNote = result.Outcome switch
+        {
+            PickUpOutcome.Overflow => $"NOT LOADED — {sizes.Sum(s => s.Value)} SCU would exceed the hold: {_onboardScu} / {_capacityScu} SCU aboard.",
+            PickUpOutcome.DoesNotFit => "NOT LOADED — these boxes do not fit in the hold, even after restowing everything. The line stays pending.",
+            PickUpOutcome.Restowed => $"RESTOW — {result.MovedBoxes} box(es) already aboard changed place. Reload the hold to match the plan.{(result.Tight ? " Tight stow: piles touch, follow the stop numbers." : "")}",
+            PickUpOutcome.Planned when result.Tight => "TIGHT STOW — no room for a gap between piles; follow the stop numbers on the hold plan.",
+            _ => null,
+        };
         _pickingUp = null;
         await RefreshAsync();
     }

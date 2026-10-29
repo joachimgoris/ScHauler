@@ -3,10 +3,10 @@
         <span class="route-title">ROUTE &amp; MANIFEST</span>
         <span class="route-subtitle">drop order</span>
     </div>
-    @foreach (var (dest, index) in DropOrder.Select((d, i) => (d, i)))
+    @foreach (var (destination, index) in Destinations.Select((d, i) => (d, i)))
     {
-        var card = BuildCard(dest);
-        if (card is null) { continue; }
+        var dest = destination.Name;
+        var card = BuildCard(destination);
         <div class="route-card @(Isolated is not null && !string.Equals(Isolated, dest, StringComparison.OrdinalIgnoreCase) ? "route-card-dimmed" : null)"
              style="--c: @Color(dest);"
              @onclick="() => OnToggleIsolate.InvokeAsync(dest)">
@@ -17,14 +17,14 @@
                 <span class="route-steppers">
                     <button type="button" class="route-step" disabled="@(index == 0)"
                             aria-label="Move @dest earlier in the route"
-                            @onclick="() => OnMove.InvokeAsync((dest, -1))" @onclick:stopPropagation>▲</button>
-                    <button type="button" class="route-step" disabled="@(index == DropOrder.Count - 1)"
+                            @onclick="() => OnMove.InvokeAsync((destination.Id, -1))" @onclick:stopPropagation>▲</button>
+                    <button type="button" class="route-step" disabled="@(index == Destinations.Count - 1)"
                             aria-label="Move @dest later in the route"
-                            @onclick="() => OnMove.InvokeAsync((dest, +1))" @onclick:stopPropagation>▼</button>
+                            @onclick="() => OnMove.InvokeAsync((destination.Id, +1))" @onclick:stopPropagation>▼</button>
                 </span>
             </div>
             <div class="route-stowline num">
-                @(card.Stacks == 0 ? "not aboard yet" : $"stowed {card.Stacks} {(card.Stacks == 1 ? "stack" : "stacks")} · nearest cell {card.NearestCell} from ramp")
+                @(card.Stacks == 0 ? "not aboard yet" : $"stowed {card.Stacks} {(card.Stacks == 1 ? "stack" : "stacks")} · nearest cell {card.NearestCell} from ramp")@(destination.PendingScu > 0 ? $" · {destination.PendingScu} SCU pending" : "")
             </div>
             @foreach (var row in card.Rows)
             {
@@ -49,10 +49,10 @@
     public IReadOnlyList<LocationStop> Stops { get; set; } = [];
 
     [Parameter, EditorRequired]
-    public Services.HoldView Hold { get; set; } = new([], 0);
+    public Services.HoldView Hold { get; set; } = new([], 0, []);
 
     [Parameter, EditorRequired]
-    public IReadOnlyList<string> DropOrder { get; set; } = [];
+    public IReadOnlyList<Destination> Destinations { get; set; } = [];
 
     [Parameter, EditorRequired]
     public IReadOnlyDictionary<string, string> Colors { get; set; } = new Dictionary<string, string>();
@@ -64,7 +64,7 @@
     public EventCallback<string> OnToggleIsolate { get; set; }
 
     [Parameter]
-    public EventCallback<(string Dest, int Delta)> OnMove { get; set; }
+    public EventCallback<(LocationId Id, int Delta)> OnMove { get; set; }
 
     [Parameter]
     public EventCallback<CargoLineId> OnDeliver { get; set; }
@@ -75,22 +75,18 @@
 
     private string Color(string dest) => Colors.GetValueOrDefault(dest, "#6cb8e8");
 
-    private Card? BuildCard(string dest)
+    private Card BuildCard(Destination destination)
     {
-        var stop = Stops.FirstOrDefault(s => string.Equals(s.LocationName, dest, StringComparison.OrdinalIgnoreCase));
-        var actions = stop?.Actions.Where(a => a.Kind == ActionKind.Deliver).ToList();
-        if (actions is null || actions.Count == 0)
-        {
-            return null;
-        }
+        var stop = Stops.FirstOrDefault(s => s.LocationId == destination.Id);
+        var actions = stop?.Actions.Where(a => a.Kind == ActionKind.Deliver).ToList() ?? [];
 
         var boxes = Hold.Bays
             .SelectMany(bay => bay.Boxes.Select(b => (Bay: bay, Box: b)))
-            .Where(x => string.Equals(x.Box.DropOffName, dest, StringComparison.OrdinalIgnoreCase))
+            .Where(x => string.Equals(x.Box.DropOffName, destination.Name, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         return new Card(
-            actions.Sum(a => a.Scu),
+            destination.AboardScu,
             boxes.Select(x => (x.Bay.Name, x.Box.X, x.Box.Y)).Distinct().Count(),
             boxes.Count == 0 ? 0 : boxes.Min(x => x.Bay.DrawOffsetX + x.Box.X),
             [.. actions.Select(a => new CardRow(

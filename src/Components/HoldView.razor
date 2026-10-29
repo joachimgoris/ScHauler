@@ -20,6 +20,18 @@
         {
             <p class="hold-warning">@Hold.UnplacedBoxes aboard box(es) have no planned spot — hold was too full at pickup.</p>
         }
+        @foreach (var conflict in Conflicts)
+        {
+            <p class="hold-note hold-note-warn">@conflict.BlockedDropOff (drop @StopNumber(conflict.BlockedDropOff)) is buried behind @conflict.BlockingDropOff (drop @StopNumber(conflict.BlockingDropOff))</p>
+        }
+        @if (UnreservedScu > 0)
+        {
+            <p class="hold-note hold-note-warn">Suggested stow short by @UnreservedScu SCU — pending cargo will not all fit behind what is aboard</p>
+        }
+        @if (Hold.Ghosts.Count > 0)
+        {
+            <p class="hold-note">Dashed cells = suggested stow for pending cargo, numbered by drop</p>
+        }
 
         <div class="hold-plan-area">
             <div class="hold-ramp" aria-hidden="true">
@@ -48,13 +60,22 @@
                                                     bay.Height)</span>
                             </div>
                         }
+                        @foreach (var ghost in Hold.Ghosts)
+                        {
+                            <div class="hold-ghost @(Isolated is not null && !DestEquals(Isolated, ghost.DropOffName) ? "hold-ghost-dimmed" : null)"
+                                 style="--c: @Colors.GetValueOrDefault(ghost.DropOffName, "#6cb8e8"); left: calc(var(--cell) * @ghost.DrawX + 1px); top: calc(var(--cell) * @ghost.DrawY + 1px); width: calc(var(--cell) - 2px); height: calc(var(--cell) - 2px);"
+                                 aria-hidden="true">
+                                <span class="num">@StopNumber(ghost.DropOffName)</span>
+                            </div>
+                        }
                         @foreach (var stack in Stacks())
                         {
                             <button type="button"
                                     class="hold-box @(Isolated is not null && !DestEquals(Isolated, stack.Dest) ? "hold-box-dimmed" : null)"
                                     style="--c: @stack.Color; left: calc(var(--cell) * @stack.X + 1px); top: calc(var(--cell) * @stack.Y + 1px); width: calc(var(--cell) * @stack.W - 2px); height: calc(var(--cell) * @stack.D - 2px);"
-                                    aria-label="@stack.Count box(es), @stack.TotalScu SCU for @stack.Dest"
+                                    aria-label="@stack.Count box(es), @stack.TotalScu SCU for @stack.Dest, drop @StopNumber(stack.Dest)"
                                     @onclick="() => OnToggleIsolate.InvokeAsync(stack.Dest)">
+                                <span class="hold-box-stop num">@StopNumber(stack.Dest)</span>
                                 <span class="hold-box-scu num">@stack.MainScu</span>
                                 <span class="hold-box-sub num">@stack.Sub</span>
                             </button>
@@ -68,10 +89,19 @@
     private static readonly int[] RulerTicks = [0, 5, 10, 15, 20, 25, 30];
 
     [Parameter, EditorRequired]
-    public Services.HoldView Hold { get; set; } = new([], 0);
+    public Services.HoldView Hold { get; set; } = new([], 0, []);
 
     [Parameter, EditorRequired]
     public IReadOnlyDictionary<string, string> Colors { get; set; } = new Dictionary<string, string>();
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<Destination> Destinations { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlyList<StowConflict> Conflicts { get; set; } = [];
+
+    [Parameter]
+    public int UnreservedScu { get; set; }
 
     [Parameter]
     public string? Isolated { get; set; }
@@ -113,6 +143,19 @@
         }
     }
  
+    private int StopNumber(string dest)
+    {
+        for (var i = 0; i < Destinations.Count; i++)
+        {
+            if (DestEquals(Destinations[i].Name, dest))
+            {
+                return i + 1;
+            }
+        }
+
+        return 0;
+    }
+
     private static bool DestEquals(string? a, string? b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
     private static string BayLabel(string name) => name.ToUpperInvariant() switch

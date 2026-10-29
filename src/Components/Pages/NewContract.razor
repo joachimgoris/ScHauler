@@ -142,6 +142,17 @@
         try
         {
             await using var db = await Factory.CreateDbContextAsync();
+
+            // Capacity guard: a contract that cannot fit next to what is already aboard or pending is not accepted.
+            var capacity = await db.Ships.AsNoTracking().OrderBy(s => s.Name).Select(s => (int?)s.CargoCapacityScu).FirstOrDefaultAsync() ?? 0;
+            var committed = (await db.CargoLines.AsNoTracking().Where(l => l.Status != CargoLineStatus.Delivered).Select(l => l.Scu).ToListAsync()).Sum(s => s.Value);
+            var incoming = _lines.Sum(l => l.Scu);
+            if (capacity > 0 && committed + incoming > capacity)
+            {
+                _error = $"Won't fit: {committed} SCU already aboard or pending + {incoming} SCU in this contract exceeds the {capacity} SCU hold. Not accepted.";
+                return;
+            }
+
             var resolved = new Dictionary<string, Location>(StringComparer.OrdinalIgnoreCase);
 
             var names = _lines.SelectMany(l => new[] { l.Pickup, l.DropOff })

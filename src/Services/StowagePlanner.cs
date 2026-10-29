@@ -3,41 +3,94 @@ using ScHauler.Models;
 namespace ScHauler.Services;
 
 /// <summary>
-/// Pure stowage planning. Rules: a box fits inside one bay (walkways are bay boundaries); no overlap; support is the floor or full SAME-destination support; different destinations never touch - the footprint expanded by one cell in X/Y must hold no foreign box at any level. Placements are proposed one at pickup and frozen; existing placements are immovable input.
-/// Deterministic: bays in order, then lowest Z, X, Y; candidates touching the own-destination pile win over free-standing ones; unrotated before rotated. Returns null when the line cannot fit (atomic - no partial plans).
+/// Pure stowage planning. Rules: a box fits inside one bay (walkways are bay boundaries); no overlap; support is the floor or full SAME-destination support; different destinations never touch - the footprint expanded by one cell in X/Y must hold no foreign box at any level - unless <c>allowTouching</c> (tight stow, used only when the load would otherwise be refused). Placements are proposed one at pickup and frozen; existing placements are immovable input.
+/// Deterministic: candidates that do not sit in front of an earlier drop's cargo (given the optional drop order) win first, then the fewest cells outside the optional reserved region (the forecast); then bays in order, lowest Z, X, Y; candidates touching the own-destination pile win over free-standing ones; unrotated before rotated. Returns null when the line cannot fit (atomic - no partial plans).
 /// </summary>
 public static class StowagePlanner
 {
     public static IReadOnlyDictionary<CargoContainerId, Placement>? Plan(
         IReadOnlyList<ShipBay> bays,
         IReadOnlyList<CargoContainer> aboard,
-        CargoLine pickedUpLine)
+        CargoLine pickedUpLine,
+        IReadOnlySet<HoldCell>? reserved = null,
+        IReadOnlyList<LocationId>? dropOrder = null,
+        bool allowTouching = false)
     {
         ArgumentNullException.ThrowIfNull(bays);
         ArgumentNullException.ThrowIfNull(aboard);
         ArgumentNullException.ThrowIfNull(pickedUpLine);
 
-        var occupied = new Dictionary<(ShipBayId BayId, int X, int Y, int Z), LocationId>();
-        foreach (var container in aboard)
+        var placed = aboard
+            .Where(c => c.Placement is not null)
+            .Select(c => new PlacedBox(c.Line.DropOffLocationId, c.Size, c.Placement!.Value))
+            .ToList();
+
+        return PlanBoxes(bays, placed, pickedUpLine.Containers.Where(c => c.Placement is null), pickedUpLine.DropOffLocationId, reserved, dropOrder, allowTouching);
+    }
+
+    /// <summary>
+    /// Global restow: every box of every line is re-placed from an empty hold, lines in drop order so earlier drops end up nearest the ramp. Used only when the incremental plan fails; null when the hold cannot take it all even then.
+    /// </summary>
+    public static IReadOnlyDictionary<CargoContainerId, Placement>? Repack(
+        IReadOnlyList<ShipBay> bays,
+        IReadOnlyList<CargoLine> aboardLines,
+        IReadOnlyList<LocationId> dropOrder,
+        bool allowTouching = false)
+    {
+        ArgumentNullException.ThrowIfNull(bays);
+        ArgumentNullException.ThrowIfNull(aboardLines);
+        ArgumentNullException.ThrowIfNull(dropOrder);
+
+        var position = dropOrder.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
+        var placed = new List<PlacedBox>();
+        var proposal = new Dictionary<CargoContainerId, Placement>();
+
+        foreach (var line in aboardLines.OrderBy(l => position.GetValueOrDefault(l.DropOffLocationId, int.MaxValue)).ThenBy(l => l.Id.Value))
         {
-            if (container.Placement is { } placement)
+            var plan = PlanBoxes(bays, placed, line.Containers, line.DropOffLocationId, reserved: null, dropOrder, allowTouching);
+            if (plan is null)
             {
-                foreach (var cell in Cells(container.Size, placement))
-                {
-                    occupied[cell] = container.Line.DropOffLocationId;
-                }
+                return null;
+            }
+
+            foreach (var container in line.Containers)
+            {
+                proposal[container.Id] = plan[container.Id];
+                placed.Add(new PlacedBox(line.DropOffLocationId, container.Size, plan[container.Id]));
             }
         }
 
-        var destination = pickedUpLine.DropOffLocationId;
+        return proposal;
+    }
+
+    private sealed record PlacedBox(LocationId Destination, ContainerSize Size, Placement Placement);
+
+    private static Dictionary<CargoContainerId, Placement>? PlanBoxes(
+        IReadOnlyList<ShipBay> bays,
+        IReadOnlyList<PlacedBox> placed,
+        IEnumerable<CargoContainer> boxes,
+        LocationId destination,
+        IReadOnlySet<HoldCell>? reserved,
+        IReadOnlyList<LocationId>? dropOrder,
+        bool allowTouching)
+    {
+        var occupied = new Dictionary<HoldCell, LocationId>();
+        foreach (var box in placed)
+        {
+            foreach (var cell in Cells(box.Size, box.Placement))
+            {
+                occupied[cell] = box.Destination;
+            }
+        }
+
+        var earlierFront = EarlierDropsFront(placed, destination, dropOrder);
         var proposal = new Dictionary<CargoContainerId, Placement>();
 
-        foreach (var box in pickedUpLine.Containers
-            .Where(c => c.Placement is null)
+        foreach (var box in boxes
             .OrderByDescending(c => c.Size.Value)
             .ThenBy(c => c.Id.Value))
         {
-            var placement = FindBest(bays, occupied, destination, box.Size);
+            var placement = FindBest(bays, occupied, destination, box.Size, reserved, earlierFront, allowTouching);
             if (placement is null)
             {
                 return null;
@@ -55,12 +108,15 @@ public static class StowagePlanner
 
     private static Placement? FindBest(
         IReadOnlyList<ShipBay> bays,
-        Dictionary<(ShipBayId BayId, int X, int Y, int Z), LocationId> occupied,
+        Dictionary<HoldCell, LocationId> occupied,
         LocationId destination,
-        ContainerSize size)
+        ContainerSize size,
+        IReadOnlySet<HoldCell>? reserved,
+        Dictionary<(ShipBayId BayId, int Lane), int> earlierFront,
+        bool allowTouching)
     {
         Placement? best = null;
-        var bestKey = (Category: int.MaxValue, Bay: 0, X: 0, Y: 0, Z: 0, Rotated: 0);
+        var bestKey = (Buries: int.MaxValue, Outside: int.MaxValue, Category: int.MaxValue, Bay: 0, X: 0, Y: 0, Z: 0, Rotated: 0);
 
         for (int bayIndex = 0; bayIndex < bays.Count; bayIndex++)
         {
@@ -80,13 +136,18 @@ public static class StowagePlanner
                         for (int y = 0; y <= bay.Width - width; y++)
                         {
                             var candidate = new Placement(bay.Id, x, y, z, rotated);
-                            if (!IsValid(bay, occupied, destination, size, candidate))
+                            if (!IsValid(bay, occupied, destination, size, candidate, allowTouching))
                             {
                                 continue;
                             }
 
+                            // Never sit in front of cargo that leaves the ship earlier, when there is any other spot.
+                            var buries = Enumerable.Range(y, width)
+                                .Any(lane => earlierFront.TryGetValue((bay.Id, lane), out var front) && front > x + length - 1) ? 1 : 0;
+                            // ponytail: regions are a cell budget, not box shapes (sizes are unknown until pickup), so "fewest cells outside" pulls an oversized box to the region's deep edge instead of rejecting it.
+                            var outside = reserved is null ? 0 : Cells(size, candidate).Count(c => !reserved.Contains(c));
                             var category = TouchesOwnPile(occupied, destination, size, candidate) ? 0 : 1;
-                            var key = (category, bayIndex, x, y, z, rotated ? 1 : 0);
+                            var key = (buries, outside, category, bayIndex, x, y, z, rotated ? 1 : 0);
                             if (key.CompareTo(bestKey) < 0)
                             {
                                 best = candidate;
@@ -102,11 +163,11 @@ public static class StowagePlanner
 
     private static bool IsValid(
         ShipBay bay,
-        Dictionary<(ShipBayId BayId, int X, int Y, int Z), LocationId> occupied,
+        Dictionary<HoldCell, LocationId> occupied,
         LocationId destination,
         ContainerSize size,
-        Placement candidate
-    )
+        Placement candidate,
+        bool allowTouching)
     {
         foreach (var cell in Cells(size, candidate))
         {
@@ -125,7 +186,7 @@ public static class StowagePlanner
             {
                 for (int dy = 0; dy < width; dy++)
                 {
-                    if (!occupied.TryGetValue((bay.Id, candidate.X + dx, candidate.Y + dy, candidate.Z - 1), out var below) || below != destination)
+                    if (!occupied.TryGetValue(new HoldCell(bay.Id, candidate.X + dx, candidate.Y + dy, candidate.Z - 1), out var below) || below != destination)
                     {
                         return false;
                     }
@@ -133,14 +194,19 @@ public static class StowagePlanner
             }
         }
 
-        // Clearance: expanded footprint(+- in X/Y), every level - no foreign boxes.
+        // Clearance: expanded footprint(+- in X/Y), every level - no foreign boxes. Tight stow (hold would otherwise refuse the load) lets piles touch side by side; stacking across destinations stays forbidden via the support rule.
+        if (allowTouching)
+        {
+            return true;
+        }
+
         for (int x = candidate.X - 1; x <= candidate.X + length; x++)
         {
             for (var y = candidate.Y - 1; y <= candidate.Y + width; y++)
             {
                 for (int z = 0; z < bay.Height; z++)
                 {
-                    if (occupied.TryGetValue((bay.Id, x, y, z), out var other) && other != destination)
+                    if (occupied.TryGetValue(new HoldCell(bay.Id, x, y, z), out var other) && other != destination)
                     {
                         return false;
                     }
@@ -151,8 +217,30 @@ public static class StowagePlanner
         return true;
     }
 
+    /// <summary>
+    /// Per bay and lane, the nearest-to-ramp X of cargo aboard for drops earlier than this line's. Bays are independent: the walkway reaches every bay, so forward-bay cargo never buries aft-bay cargo. Empty when the drop order is unknown.
+    /// </summary>
+    private static Dictionary<(ShipBayId BayId, int Lane), int> EarlierDropsFront(
+        IReadOnlyList<PlacedBox> placed,
+        LocationId destination,
+        IReadOnlyList<LocationId>? dropOrder)
+    {
+        var position = dropOrder?.ToList().IndexOf(destination) ?? -1;
+        if (position < 0)
+        {
+            return [];
+        }
+
+        var earlier = dropOrder!.Take(position).ToHashSet();
+        return placed
+            .Where(b => earlier.Contains(b.Destination))
+            .SelectMany(b => Cells(b.Size, b.Placement))
+            .GroupBy(cell => (cell.BayId, cell.Y))
+            .ToDictionary(g => g.Key, g => g.Min(cell => cell.X));
+    }
+
     private static bool TouchesOwnPile(
-        Dictionary<(ShipBayId BayId, int X, int Y, int Z), LocationId> occupied,
+        Dictionary<HoldCell, LocationId> occupied,
         LocationId destination,
         ContainerSize size,
         Placement candidate)
@@ -161,7 +249,7 @@ public static class StowagePlanner
         {
             foreach (var (nx, ny, nz) in (ReadOnlySpan<(int, int, int)>)[(x - 1, y, z), (x + 1, y, z), (x, y - 1, z), (x, y + 1, z), (x, y, z - 1), (x, y, z + 1)])
             {
-                if (occupied.TryGetValue((bayId, nx, ny, nz), out var d) && d == destination)
+                if (occupied.TryGetValue(new HoldCell(bayId, nx, ny, nz), out var d) && d == destination)
                 {
                     return true;
                 }
@@ -170,7 +258,7 @@ public static class StowagePlanner
         return false;
     }
 
-    private static IEnumerable<(ShipBayId BayId, int X, int Y, int Z)> Cells(ContainerSize size, Placement placement)
+    internal static IEnumerable<HoldCell> Cells(ContainerSize size, Placement placement)
     {
         var (length, width) = Footprint(size, placement.Rotated);
         for (int dx = 0; dx < length; dx++)
@@ -179,7 +267,7 @@ public static class StowagePlanner
             {
                 for (int dz = 0; dz < size.Height; dz++)
                 {
-                    yield return (placement.BayId, placement.X + dx, placement.Y + dy, placement.Z + dz);
+                    yield return new HoldCell(placement.BayId, placement.X + dx, placement.Y + dy, placement.Z + dz);
                 }
             }
         }
