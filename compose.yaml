@@ -5,5 +5,10 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/app/data:U
+      - hauler-data:/app/data
     restart: unless-stopped
+
+# Named volume instead of a bind mount: Docker rejects Podman's ":U" chown flag, and a bind-mounted
+# folder owned by the host user is not writable by the container's non-root "app" user on Linux.
+volumes:
+  hauler-data:
