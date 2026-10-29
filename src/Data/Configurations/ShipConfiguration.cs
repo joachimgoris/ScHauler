@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using ScHauler.Data.Converters;
 using ScHauler.Models;
 
 namespace ScHauler.Data.Configurations;
@@ -21,6 +22,10 @@ public sealed class ShipConfiguration : IEntityTypeConfiguration<Ship>
             .WithMany()
             .HasForeignKey(s => s.CurrentLocationId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        builder.Property<List<LocationId>>("_pinnedDropOrder")
+            .HasColumnName("PinnedDropOrder")
+            .HasConversion(new LocationIdListConverter(), LocationIdListConverter.Comparer);
 
         builder.Navigation(s => s.Bays)
             .UsePropertyAccessMode(PropertyAccessMode.Field)

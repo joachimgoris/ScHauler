@@ -182,12 +182,49 @@ Field run with a 900 SCU contract on top of 1,122 SCU aboard + 192 pending:
   32-SCU boxes (8 long in 20- and 10-long bays: 54 slots = 1,728 SCU) plus
   own-destination-only support above partial towers.
 
+### 2026-10-29 (afternoon) — Phase C decided
+
+Two field annoyances, both small, both opt-in to what B2 already computes:
+
+- **The pinned drop order dies when the ship moves.** It lives in the page
+  (`_dropOrder` + `_manualDropOrder`), so every location change and every
+  page reload falls back to the route heuristic. Decision: the pin is ship
+  state, persisted, cleared only by an explicit "ROUTE ORDER" tap.
+- **Geometry decides at the dock, SCU decides at the contract.** A 700 SCU
+  line passes the NewContract guard and is refused at pickup. Decision:
+  show, for the line being picked up, the largest uniform box size that
+  still fits (dry run of the same tiers the dock uses). Shown in the
+  pickup dialog first; NewContract stays SCU-only because other pending
+  lines are not aboard yet, so any geometry there would be a guess.
+
+### 2026-10-29 (late) — other ships, other users: noted, not decided
+
+Joachim is considering opening the tool to other haulers, which means
+other ships than the Ironclad. Where that stands today:
+
+- **Ships are already data.** `Ship` + `ShipBay` (dims, draw offsets) and
+  every planner are generic; the only Ironclad-specific code is the seed in
+  `LocationSeed` and the "Ironclad" caption in `HoldView.razor`. Another
+  ship = another bay layout row set; no planner work. Open questions per
+  ship: walkway reach (burial is per bay because the Ironclad walkway
+  reaches every bay - a ship with a single deep hold would need a
+  canvas-wide rule again) and ramp side.
+- **A ship catalog + "active ship" is a small phase** (seed several hulls,
+  pick one, capacity and bays follow). The manifest currently takes
+  `Ships.OrderBy(Name).First()`.
+- **Other users is the big step, not other ships**: accounts, per-user
+  contracts and ship, hosting beyond the home server, backups. That is a
+  different app shape; decide the product question (shared instance vs
+  self-hosted container per hauler) before any code.
+
 ### Pending decisions (recommendation noted; confirm when reached)
 
 - **Container edit rules** — implemented: add/remove only while Pending,
   never remove the last container. (Confirmed by tests Joachim wrote.)
-- **`ShipSettings` fate** — recommend: delete at the EF step; capacity lives
-  on `Ship` only.
+- **`ShipSettings` fate** — done: deleted; capacity lives on `Ship` only.
+- **Where fit advice shows (C2)** — recommend: pickup dialog only. Upgrade
+  path: a "CHECK FIT" tap on a pending line in NewContract/Contracts that
+  runs the same dry run against what is aboard *now*, labelled as such.
 
 ## Phase A — Cargo containers & ship manifest (✓ COMPLETE 2026-09-03)
 
@@ -454,6 +491,82 @@ secondary.
 
 Manual drag-to-override, persisted drop order, a global repack, forecasting
 rotated footprints (regions are cells, boxes still rotate at pickup).
+
+## Phase C — Pinned drop order + fit advice (✓ COMPLETE 2026-10-29)
+
+**Implemented the same afternoon (Claude wrote the code at Joachim's
+request), 121 tests green, verified in the browser on the 1,794 SCU load:
+the pin survived a full page reload and "ROUTE ORDER" cleared it; a 96 SCU
+line got "FITS as 2 SCU boxes or smaller — tight stow" and the dock then
+refused 3 × 32 with "NOT LOADED", as advised. Notes:**
+
+- `StowageAdvisor.Split` is public (tests need it; no InternalsVisibleTo).
+- Measured: next to the tight-restowed 1,822 SCU field load only 96 SCU
+  fits, and only as 2 SCU boxes; 128 does not. Advice costs ~100 ms when
+  the first size fits and ~1.2 s in the worst case (7 sizes × 4 tiers); a
+  line larger than the free cell count is refused without planning.
+- Existing databases need `ALTER TABLE Ships ADD COLUMN PinnedDropOrder
+  TEXT NOT NULL DEFAULT ''` or a delete (EnsureCreated adds no columns).
+
+Order was: C1 → C2; independent, C1 first because it deletes page state that
+C2's dialog would otherwise have to thread through.
+
+### C1 — Persisted drop order
+
+Pure/domain first (NUnit), then EF, then page. Schema change: delete
+`data/hauler.db`.
+
+1. **`Ship.PinnedDropOrder`** (`IReadOnlyList<LocationId>`, empty = route
+   order). `PinDropOrder(IReadOnlyList<LocationId>)` guards: not null, no
+   duplicates. `ClearDropOrder()`. `MoveTo` does **not** touch it any more.
+   Tests: pin round-trips, duplicate throws, clear empties, move keeps pin.
+2. **Persistence in Data/** — one text column, Guids joined with `,`, via a
+   value converter + comparer in `ShipConfiguration`. No owned entity, no
+   join table: the list is tiny and never queried. Test: converter
+   round-trips empty and three ids.
+3. **Service** — `GetManifestAsync()` and `PickUpAsync(id, sizes)` lose the
+   `dropOrder` parameter and read `ship.PinnedDropOrder` (empty → null →
+   route order; `ManifestPlanner.DropOrder` already drops stale ids and
+   appends newcomers, so delivered destinations fall out by themselves).
+   New `PinDropOrderAsync(IReadOnlyList<LocationId>)` and
+   `ClearDropOrderAsync()`. `ManifestSnapshot` gains `bool DropOrderPinned`.
+4. **Page/components** — delete `_manualDropOrder`; `MoveStopAsync` swaps
+   in a copy of the current order and calls `PinDropOrderAsync`, then
+   refreshes. `RouteManifest` shows a "ROUTE ORDER" button (text, no
+   color-only state) only while pinned; tapping clears. Reloading the page
+   or moving the ship keeps the pin.
+
+### C2 — Fit advice in the pickup dialog
+
+1. **Extract the tiers** from `ManifestService.PickUpAsync` into a pure
+   `StowagePlanner.PlanTiered(bays, aboardLines, destination, boxes, dropOrder)`
+   where `boxes` is `IReadOnlyList<(CargoContainerId Id, ContainerSize Size)>`
+   and the result is `(PickUpOutcome-like tier, placements)`: moat >
+   touching > restow moat > restow touching > null. `Repack` learns to take
+   the extra line as a box list instead of a `CargoLine`, so a dry run
+   never needs a mutated entity. `PickUpAsync` becomes: guard SCU, move,
+   `line.PickUp(sizes)`, `PlanTiered` with the real container ids, apply.
+   Existing planner/service tests must stay green unchanged — this step is
+   a refactor.
+2. **`StowageAdvisor.LargestBoxThatFits`** (Services/, pure, TDD): for each
+   `ContainerSize` descending, split the line's SCU greedily into boxes no
+   larger than that size (500 → 15×32 + 16 + 4), dry-run `PlanTiered`,
+   return the first size that fits with its tier, or null. Stops at the
+   first hit, so the common case costs one plan (~100 ms), the refused
+   case at most 7 × 4 tries. `ponytail:` smaller boxes are assumed to fit
+   whenever larger ones do — true for own-destination support, not proven.
+   Tests: empty hold → 32 fits planned; the measured 1,314 SCU fixture →
+   700 SCU returns null, 480 returns 16 with restow.
+3. **Dialog** — on `ActionTappedAsync` the page calls a new
+   `ManifestService.AdviseAsync(cargoLineId)` and shows one text line above
+   the counters: "FITS as 32 SCU boxes", "FITS as 16 SCU boxes or smaller —
+   restow needed", "TIGHT — …", or "WON'T FIT — no box mix fits, even after
+   a restow". Text first, never color alone.
+
+#### Explicitly out of C
+
+Fit advice on NewContract (see pending decisions), drag-to-reorder, a
+global repack button, forecasting rotated footprints.
 
 ## Definition of done, all phases
 

@@ -2,6 +2,24 @@ using ScHauler.Models;
 
 namespace ScHauler.Services;
 
+public enum StowTier
+{
+    /// <summary>Boxes placed with the moat kept.</summary>
+    Planned,
+
+    /// <summary>Boxes placed, but piles touch side by side.</summary>
+    Tight,
+
+    /// <summary>The whole hold was re-planned from empty, moat kept.</summary>
+    Restowed,
+
+    /// <summary>The whole hold was re-planned and piles touch.</summary>
+    RestowedTight,
+}
+
+/// <summary>Placements for the new boxes; for a restow, for every box aboard too.</summary>
+public sealed record TieredPlan(StowTier Tier, IReadOnlyDictionary<CargoContainerId, Placement> Placements);
+
 /// <summary>
 /// Pure stowage planning. Rules: a box fits inside one bay (walkways are bay boundaries); no overlap; support is the floor or full SAME-destination support; different destinations never touch - the footprint expanded by one cell in X/Y must hold no foreign box at any level - unless <c>allowTouching</c> (tight stow, used only when the load would otherwise be refused). Placements are proposed one at pickup and frozen; existing placements are immovable input.
 /// Deterministic: candidates that do not sit in front of an earlier drop's cargo (given the optional drop order) win first, then the fewest cells outside the optional reserved region (the forecast); then bays in order, lowest Z, X, Y; candidates touching the own-destination pile win over free-standing ones; unrotated before rotated. Returns null when the line cannot fit (atomic - no partial plans).
@@ -25,7 +43,49 @@ public static class StowagePlanner
             .Select(c => new PlacedBox(c.Line.DropOffLocationId, c.Size, c.Placement!.Value))
             .ToList();
 
-        return PlanBoxes(bays, placed, pickedUpLine.Containers.Where(c => c.Placement is null), pickedUpLine.DropOffLocationId, reserved, dropOrder, allowTouching);
+        return PlanBoxes(bays, placed, pickedUpLine.Containers.Where(c => c.Placement is null).Select(ToBox), pickedUpLine.DropOffLocationId, reserved, dropOrder, allowTouching);
+    }
+
+    /// <summary>
+    /// The dock's tiers in one call: moat kept > piles touch > restow with moat > restow touching; null when nothing fits. Pure: <paramref name="aboardLines"/> are read, never moved, so this doubles as the dry run behind the fit advice.
+    /// </summary>
+    public static TieredPlan? PlanTiered(
+        IReadOnlyList<ShipBay> bays,
+        IReadOnlyList<CargoLine> aboardLines,
+        LocationId destination,
+        IReadOnlyList<StowBox> boxes,
+        IReadOnlySet<HoldCell>? reserved,
+        IReadOnlyList<LocationId> dropOrder)
+    {
+        ArgumentNullException.ThrowIfNull(bays);
+        ArgumentNullException.ThrowIfNull(aboardLines);
+        ArgumentNullException.ThrowIfNull(boxes);
+        ArgumentNullException.ThrowIfNull(dropOrder);
+
+        var placed = aboardLines
+            .SelectMany(l => l.Containers)
+            .Where(c => c.Placement is not null)
+            .Select(c => new PlacedBox(c.Line.DropOffLocationId, c.Size, c.Placement!.Value))
+            .ToList();
+
+        foreach (var tight in new[] { false, true })
+        {
+            var plan = PlanBoxes(bays, placed, boxes, destination, reserved, dropOrder, tight);
+            if (plan is not null)
+            {
+                return new TieredPlan(tight ? StowTier.Tight : StowTier.Planned, plan);
+            }
+        }
+
+        var all = aboardLines.Select(ToBoxLine).Append(new BoxLine(destination, boxes.Count == 0 ? Guid.Empty : boxes[0].Id.Value, boxes)).ToList();
+        var repack = RepackBoxes(bays, all, dropOrder, allowTouching: false);
+        if (repack is not null)
+        {
+            return new TieredPlan(StowTier.Restowed, repack);
+        }
+
+        repack = RepackBoxes(bays, all, dropOrder, allowTouching: true);
+        return repack is null ? null : new TieredPlan(StowTier.RestowedTight, repack);
     }
 
     /// <summary>
@@ -41,22 +101,31 @@ public static class StowagePlanner
         ArgumentNullException.ThrowIfNull(aboardLines);
         ArgumentNullException.ThrowIfNull(dropOrder);
 
+        return RepackBoxes(bays, [.. aboardLines.Select(ToBoxLine)], dropOrder, allowTouching);
+    }
+
+    private static Dictionary<CargoContainerId, Placement>? RepackBoxes(
+        IReadOnlyList<ShipBay> bays,
+        IReadOnlyList<BoxLine> lines,
+        IReadOnlyList<LocationId> dropOrder,
+        bool allowTouching)
+    {
         var position = dropOrder.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
         var placed = new List<PlacedBox>();
         var proposal = new Dictionary<CargoContainerId, Placement>();
 
-        foreach (var line in aboardLines.OrderBy(l => position.GetValueOrDefault(l.DropOffLocationId, int.MaxValue)).ThenBy(l => l.Id.Value))
+        foreach (var line in lines.OrderBy(l => position.GetValueOrDefault(l.Destination, int.MaxValue)).ThenBy(l => l.Order))
         {
-            var plan = PlanBoxes(bays, placed, line.Containers, line.DropOffLocationId, reserved: null, dropOrder, allowTouching);
+            var plan = PlanBoxes(bays, placed, line.Boxes, line.Destination, reserved: null, dropOrder, allowTouching);
             if (plan is null)
             {
                 return null;
             }
 
-            foreach (var container in line.Containers)
+            foreach (var box in line.Boxes)
             {
-                proposal[container.Id] = plan[container.Id];
-                placed.Add(new PlacedBox(line.DropOffLocationId, container.Size, plan[container.Id]));
+                proposal[box.Id] = plan[box.Id];
+                placed.Add(new PlacedBox(line.Destination, box.Size, plan[box.Id]));
             }
         }
 
@@ -65,10 +134,16 @@ public static class StowagePlanner
 
     private sealed record PlacedBox(LocationId Destination, ContainerSize Size, Placement Placement);
 
+    private sealed record BoxLine(LocationId Destination, Guid Order, IReadOnlyList<StowBox> Boxes);
+
+    private static StowBox ToBox(CargoContainer container) => new(container.Id, container.Size);
+
+    private static BoxLine ToBoxLine(CargoLine line) => new(line.DropOffLocationId, line.Id.Value, [.. line.Containers.Select(ToBox)]);
+
     private static Dictionary<CargoContainerId, Placement>? PlanBoxes(
         IReadOnlyList<ShipBay> bays,
         IReadOnlyList<PlacedBox> placed,
-        IEnumerable<CargoContainer> boxes,
+        IEnumerable<StowBox> boxes,
         LocationId destination,
         IReadOnlySet<HoldCell>? reserved,
         IReadOnlyList<LocationId>? dropOrder,

@@ -61,8 +61,8 @@
 <div class="manifest-body">
     <HoldView Hold="_hold" Colors="_colors" Destinations="_destinations" Conflicts="_conflicts" UnreservedScu="_unreservedScu"
               Isolated="@_isolated" OnToggleIsolate="ToggleIsolate" />
-    <RouteManifest Stops="_stops" Hold="_hold" Destinations="_destinations" Colors="_colors" Isolated="@_isolated"
-                   OnToggleIsolate="ToggleIsolate" OnMove="MoveStopAsync" OnDeliver="DeliverAsync" />
+    <RouteManifest Stops="_stops" Hold="_hold" Destinations="_destinations" Colors="_colors" Isolated="@_isolated" Pinned="_dropOrderPinned"
+                   OnToggleIsolate="ToggleIsolate" OnMove="MoveStopAsync" OnClearOrder="ClearDropOrderAsync" OnDeliver="DeliverAsync" />
 </div>
 
 @if (_stops.Count == 0)
@@ -101,6 +101,10 @@
             {
                 <div class="pickup-entry">
                     <p class="pickup-entry-title">@action.Commodity - tap the boxes at hand</p>
+                    @if (AdviceText() is { } advice)
+                    {
+                        <p class="pickup-advice" role="status">@advice</p>
+                    }
                     <BoxCounters Counts="_pickUpCounts" OnChanged="StateHasChanged" />
                     <div class="pickup-entry-actions">
                         <span class="pickup-total num">@PickupTotal / @action.Scu SCU</span>
@@ -141,7 +145,8 @@
 
     private string? _isolated;
     private IReadOnlyList<Destination> _destinations = [];
-    private List<LocationId> _dropOrder = [];
+    private bool _dropOrderPinned;
+    private PickUpAdvice? _advice;
     private Dictionary<string, string> _colors = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<StowConflict> _conflicts = [];
     private int _unreservedScu;
@@ -154,7 +159,6 @@
     private int _capacityScu;
     private IReadOnlyList<Location> _locations = [];
     private string _currentLocation = "";
-    private bool _manualDropOrder;
 
     private int Percent(int scu) => _capacityScu <= 0
         ? 0
@@ -162,10 +166,10 @@
 
     protected override Task OnInitializedAsync() => RefreshAsync();
 
-    // Route order is the default; a manual ▲/▼ pins the list until the ship moves. The service merges the two.
+    // Route order is the default; a ▲/▼ tap pins the list on the ship until "ROUTE ORDER" clears it.
     private async Task RefreshAsync()
     {
-        var snapshot = await ManifestService.GetManifestAsync(_manualDropOrder ? _dropOrder : null);
+        var snapshot = await ManifestService.GetManifestAsync();
         _stops = snapshot.Stops;
         _onboardScu = snapshot.OnboardScu;
         _capacityScu = snapshot.CapacityScu;
@@ -173,7 +177,7 @@
         _locations = snapshot.Locations;
         _currentLocation = snapshot.CurrentLocationId?.Value.ToString() ?? "";
         _destinations = snapshot.Destinations;
-        _dropOrder = [.. _destinations.Select(d => d.Id)];
+        _dropOrderPinned = snapshot.DropOrderPinned;
         _unreservedScu = snapshot.UnreservedScu;
         _colors = _destinations
             .Select((d, index) => (d.Name, Color: DestinationColors[index % DestinationColors.Length]))
@@ -186,15 +190,22 @@
 
     private async Task MoveStopAsync((LocationId Id, int Delta) move)
     {
-        var from = _dropOrder.IndexOf(move.Id);
+        var order = _destinations.Select(d => d.Id).ToList();
+        var from = order.IndexOf(move.Id);
         var to = from + move.Delta;
-        if (from < 0 || to < 0 || to >= _dropOrder.Count)
+        if (from < 0 || to < 0 || to >= order.Count)
         {
             return;
         }
 
-        (_dropOrder[from], _dropOrder[to]) = (_dropOrder[to], _dropOrder[from]);
-        _manualDropOrder = true;
+        (order[from], order[to]) = (order[to], order[from]);
+        await ManifestService.PinDropOrderAsync(order);
+        await RefreshAsync();
+    }
+
+    private async Task ClearDropOrderAsync()
+    {
+        await ManifestService.ClearDropOrderAsync();
         await RefreshAsync();
     }
 
@@ -211,18 +222,33 @@
         await RefreshAsync();
     }
 
-    private Task ActionTappedAsync(StopAction action)
+    private async Task ActionTappedAsync(StopAction action)
     {
         _pickingUp = action.CargoLineId;
         _pickUpCounts = ContainerSize.All.ToDictionary(s => s, s => action.Boxes.FirstOrDefault(b => b.Size == s)?.Count ?? 0);
-        return Task.CompletedTask;
+        _advice = null;
+        _advice = await ManifestService.AdviseAsync(action.CargoLineId);
     }
+
+    private string? AdviceText() => _advice switch
+    {
+        null or { HoldKnown: false } => null,
+        { Overflow: true } => "WON'T FIT — exceeds the hold's capacity.",
+        { Fit: null } => "WON'T FIT — no box mix fits, even after a restow.",
+        { Fit: var fit } => $"FITS as {fit.LargestBox.Value} SCU boxes or smaller" + fit.Tier switch
+        {
+            StowTier.Planned => ".",
+            StowTier.Tight => " — tight stow, piles touch.",
+            StowTier.Restowed => " — restow needed.",
+            _ => " — restow needed, tight stow.",
+        },
+    };
 
     private async Task ConfirmPickUpAsync(CargoLineId cargoLineId)
     {
         var sizes = ContainerSize.All.SelectMany(s => Enumerable.Repeat(s, _pickUpCounts.GetValueOrDefault(s))).ToList();
 
-        var result = await ManifestService.PickUpAsync(cargoLineId, sizes, _manualDropOrder ? _dropOrder : null);
+        var result = await ManifestService.PickUpAsync(cargoLineId, sizes);
         _pickUpNote = result.Outcome switch
         {
             PickUpOutcome.Overflow => $"NOT LOADED — {sizes.Sum(s => s.Value)} SCU would exceed the hold: {_onboardScu} / {_capacityScu} SCU aboard.",
@@ -243,7 +269,6 @@
         }
 
         await ManifestService.SetCurrentLocationAsync(new LocationId(guid));
-        _manualDropOrder = false;
         await RefreshAsync();
     }
 }

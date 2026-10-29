@@ -1054,6 +1054,19 @@ a:focus-visible {
   cursor: default;
 }
 
+.route-reset {
+  width: auto;
+  padding: 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.pickup-advice {
+  margin: 0 0 10px;
+  font-weight: 600;
+  color: var(--pickup);
+}
+
 .route-stowline {
   padding: 9px 15px;
   background: #0e1620;

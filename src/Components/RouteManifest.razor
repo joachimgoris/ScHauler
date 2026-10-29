@@ -1,7 +1,12 @@
 <div class="route-col">
     <div class="route-head">
         <span class="route-title">ROUTE &amp; MANIFEST</span>
-        <span class="route-subtitle">drop order</span>
+        <span class="route-subtitle">@(Pinned ? "pinned order" : "route order")</span>
+        @if (Pinned)
+        {
+            <button type="button" class="route-step route-reset" aria-label="Back to route order"
+                    @onclick="() => OnClearOrder.InvokeAsync()">ROUTE ORDER</button>
+        }
     </div>
     @foreach (var (destination, index) in Destinations.Select((d, i) => (d, i)))
     {
@@ -64,7 +69,13 @@
     public EventCallback<string> OnToggleIsolate { get; set; }
 
     [Parameter]
+    public bool Pinned { get; set; }
+
+    [Parameter]
     public EventCallback<(LocationId Id, int Delta)> OnMove { get; set; }
+
+    [Parameter]
+    public EventCallback OnClearOrder { get; set; }
 
     [Parameter]
     public EventCallback<CargoLineId> OnDeliver { get; set; }

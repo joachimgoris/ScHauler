@@ -12,7 +12,8 @@ public sealed record ManifestSnapshot(
     LocationId? CurrentLocationId,
     IReadOnlyList<Location> Locations,
     IReadOnlyList<Destination> Destinations,
-    int UnreservedScu);
+    int UnreservedScu,
+    bool DropOrderPinned);
 
 public enum PickUpOutcome
 {
@@ -35,12 +36,15 @@ public enum PickUpOutcome
 /// <summary><paramref name="Tight"/>: piles were allowed to touch side by side because the moat rule left no room.</summary>
 public sealed record PickUpResult(PickUpOutcome Outcome, int MovedBoxes = 0, bool Tight = false);
 
+/// <summary><paramref name="HoldKnown"/> false = no ship or no bays, nothing to say. <paramref name="Fit"/> null = no box mix fits.</summary>
+public sealed record PickUpAdvice(bool HoldKnown, bool Overflow, FitAdvice? Fit);
+
 public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
 {
     /// <summary>
-    /// <paramref name="dropOrder"/> is the page's manual ▲/▼ order (null = route order); it drives the suggested-stow ghosts.
+    /// The ship's pinned ▲/▼ order (empty = route order) drives the drop order and the suggested-stow ghosts.
     /// </summary>
-    public async Task<ManifestSnapshot> GetManifestAsync(IReadOnlyList<LocationId>? dropOrder = null)
+    public async Task<ManifestSnapshot> GetManifestAsync()
     {
         await using var db = await factory.CreateDbContextAsync();
 
@@ -62,7 +66,7 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
 
         var net = RouteNet.From(locations);
         var stops = ManifestPlanner.BuildStops(lines, net, ship?.CurrentLocationId, onboardScu, capacityScu);
-        var destinations = ManifestPlanner.DropOrder(lines, net, ship?.CurrentLocationId, onboardScu, capacityScu, dropOrder);
+        var destinations = ManifestPlanner.DropOrder(lines, net, ship?.CurrentLocationId, onboardScu, capacityScu, Pin(ship));
         var forecast = StowageForecaster.Forecast(bays, aboard, lines, [.. destinations.Select(d => d.Id)]);
         var hold = ManifestPlanner.BuildHoldView(bays, aboard) with
         {
@@ -77,7 +81,70 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
             ship?.CurrentLocationId,
             [.. locations.Where(l => l.Kind == LocationKind.Site).OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase)],
             destinations,
-            forecast.UnreservedScu);
+            forecast.UnreservedScu,
+            Pin(ship) is not null);
+    }
+
+    private static IReadOnlyList<LocationId>? Pin(Ship? ship) => ship is { PinnedDropOrder.Count: > 0 } ? ship.PinnedDropOrder : null;
+
+    public async Task PinDropOrderAsync(IReadOnlyList<LocationId> order)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var ship = await db.Ships.OrderBy(s => s.Name).FirstOrDefaultAsync();
+        if (ship is null)
+        {
+            return;
+        }
+
+        ship.PinDropOrder(order);
+        await db.SaveChangesAsync();
+    }
+
+    public async Task ClearDropOrderAsync()
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var ship = await db.Ships.OrderBy(s => s.Name).FirstOrDefaultAsync();
+        if (ship is null)
+        {
+            return;
+        }
+
+        ship.ClearDropOrder();
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Dry run of the dock's tiers for a pending line: the largest box size whose mix still fits next to what is aboard now.
+    /// </summary>
+    public async Task<PickUpAdvice> AdviseAsync(CargoLineId cargoLineId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var lines = await db.CargoLines
+            .AsNoTracking()
+            .Include(l => l.Contract)
+            .Include(l => l.PickupLocation)
+            .Include(l => l.DropOffLocation)
+            .Where(l => l.Status != CargoLineStatus.Delivered)
+            .ToListAsync();
+        var line = lines.FirstOrDefault(l => l.Id == cargoLineId);
+        var ship = await db.Ships.AsNoTracking().OrderBy(s => s.Name).FirstOrDefaultAsync();
+        if (line is null || line.Status != CargoLineStatus.Pending || ship is null || ship.Bays.Count == 0)
+        {
+            return new PickUpAdvice(HoldKnown: false, Overflow: false, Fit: null);
+        }
+
+        var onboardAfter = ManifestPlanner.OnboardScu(lines) + line.Scu.Value;
+        if (ship.CargoCapacityScu > 0 && onboardAfter > ship.CargoCapacityScu)
+        {
+            return new PickUpAdvice(HoldKnown: true, Overflow: true, Fit: null);
+        }
+
+        var bays = ship.Bays.OrderBy(b => b.DrawOffsetX).ThenBy(b => b.DrawOffsetY).ToList();
+        var net = RouteNet.From(await db.Locations.AsNoTracking().ToListAsync());
+        var destinations = ManifestPlanner.DropOrder(lines, net, line.PickupLocationId, onboardAfter, ship.CargoCapacityScu, Pin(ship));
+        var aboardLines = lines.Where(l => l.Status == CargoLineStatus.PickedUp).ToList();
+        var fit = StowageAdvisor.LargestBoxThatFits(bays, aboardLines, line.DropOffLocationId, line.Scu.Value, [.. destinations.Select(d => d.Id)]);
+        return new PickUpAdvice(HoldKnown: true, Overflow: false, fit);
     }
 
     public async Task AdvanceAsync(CargoLineId cargoLineId)
@@ -123,7 +190,7 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
     /// <summary>
     /// Plans the boxes with the forecast region for this line's destination as a soft preference, so the real stow follows the suggested stow when it can.
     /// </summary>
-    public async Task<PickUpResult> PickUpAsync(CargoLineId cargoLineId, IReadOnlyList<ContainerSize> sizes, IReadOnlyList<LocationId>? dropOrder = null)
+    public async Task<PickUpResult> PickUpAsync(CargoLineId cargoLineId, IReadOnlyList<ContainerSize> sizes)
     {
         await using var db = await factory.CreateDbContextAsync();
         var lines = await db.CargoLines
@@ -148,10 +215,11 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
         // Move first: the forecast must use the same location and onboard SCU the manifest will show after this pickup.
         ship?.MoveTo(line.PickupLocationId);
         var bays = ship?.Bays.OrderBy(b => b.DrawOffsetX).ThenBy(b => b.DrawOffsetY).ToList() ?? [];
-        var aboard = lines.Where(l => l.Status == CargoLineStatus.PickedUp).SelectMany(l => l.Containers).ToList();
+        var aboardLines = lines.Where(l => l.Status == CargoLineStatus.PickedUp).ToList();
+        var aboard = aboardLines.SelectMany(l => l.Containers).ToList();
         var net = RouteNet.From(await db.Locations.AsNoTracking().ToListAsync());
         var onboardAfter = ManifestPlanner.OnboardScu(lines) + line.Scu.Value;
-        var destinations = ManifestPlanner.DropOrder(lines, net, ship?.CurrentLocationId, onboardAfter, ship?.CargoCapacityScu ?? 0, dropOrder);
+        var destinations = ManifestPlanner.DropOrder(lines, net, ship?.CurrentLocationId, onboardAfter, ship?.CargoCapacityScu ?? 0, Pin(ship));
         var forecast = StowageForecaster.Forecast(bays, aboard, lines, [.. destinations.Select(d => d.Id)]);
 
         line.PickUp(sizes);
@@ -161,45 +229,40 @@ public sealed class ManifestService(IDbContextFactory<HaulerDbContext> factory)
             return new PickUpResult(PickUpOutcome.Planned);
         }
 
-        // Tiers: moat kept > piles touch > restow with moat > restow touching. Nothing saved when none fits; the line stays pending.
-        var order = destinations.Select(d => d.Id).ToList();
-        var reserved = forecast.Regions.GetValueOrDefault(line.DropOffLocationId);
-        foreach (var tight in new[] { false, true })
-        {
-            var plan = StowagePlanner.Plan(bays, aboard, line, reserved, order, allowTouching: tight);
-            if (plan is null)
-            {
-                continue;
-            }
-
-            foreach (var container in line.Containers)
-            {
-                container.Place(plan[container.Id]);
-            }
-
-            await db.SaveChangesAsync();
-            return new PickUpResult(PickUpOutcome.Planned, Tight: tight);
-        }
-
-        var aboardLines = lines.Where(l => l.Status == CargoLineStatus.PickedUp).ToList();
-        var repack = StowagePlanner.Repack(bays, aboardLines, order);
-        var repackTight = repack is null;
-        repack ??= StowagePlanner.Repack(bays, aboardLines, order, allowTouching: true);
-        if (repack is null)
+        // Nothing saved when no tier fits; the line stays pending.
+        var plan = StowagePlanner.PlanTiered(
+            bays,
+            aboardLines,
+            line.DropOffLocationId,
+            [.. line.Containers.Select(c => new StowBox(c.Id, c.Size))],
+            forecast.Regions.GetValueOrDefault(line.DropOffLocationId),
+            [.. destinations.Select(d => d.Id)]);
+        if (plan is null)
         {
             return new PickUpResult(PickUpOutcome.DoesNotFit);
         }
 
         var moved = 0;
-        foreach (var container in aboardLines.SelectMany(l => l.Containers))
+        foreach (var container in aboardLines.Append(line).SelectMany(l => l.Containers))
         {
+            if (!plan.Placements.TryGetValue(container.Id, out var placement))
+            {
+                continue;
+            }
+
             var before = container.Placement;
-            container.Place(repack[container.Id]);
-            moved += before is not null && before != container.Placement ? 1 : 0;
+            container.Place(placement);
+            moved += before is not null && before != placement ? 1 : 0;
         }
 
         await db.SaveChangesAsync();
-        return new PickUpResult(PickUpOutcome.Restowed, moved, repackTight);
+        return plan.Tier switch
+        {
+            StowTier.Planned => new PickUpResult(PickUpOutcome.Planned),
+            StowTier.Tight => new PickUpResult(PickUpOutcome.Planned, Tight: true),
+            StowTier.Restowed => new PickUpResult(PickUpOutcome.Restowed, moved),
+            _ => new PickUpResult(PickUpOutcome.Restowed, moved, Tight: true),
+        };
     }
 
     public async Task SetCurrentLocationAsync(LocationId locationId)

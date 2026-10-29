@@ -72,4 +72,35 @@ public class ShipTests
 
         Assert.That(ship.CurrentLocationId, Is.EqualTo(location.Id));
     }
+
+    [Test]
+    public void PinDropOrder_RoundTrips_AndMoveKeepsIt()
+    {
+        var ship = Ironclad();
+        var order = new[] { TestLocations.Site("Lorville").Id, TestLocations.Site("Area18").Id };
+
+        ship.PinDropOrder(order);
+        ship.MoveTo(TestLocations.Site("Everus Harbor").Id);
+
+        Assert.That(ship.PinnedDropOrder, Is.EqualTo(order).AsCollection);
+    }
+
+    [Test]
+    public void PinDropOrder_RejectsDuplicates()
+    {
+        var id = TestLocations.Site("Lorville").Id;
+
+        Assert.Throws<ArgumentException>(() => Ironclad().PinDropOrder([id, id]));
+    }
+
+    [Test]
+    public void ClearDropOrder_Empties()
+    {
+        var ship = Ironclad();
+        ship.PinDropOrder([TestLocations.Site("Lorville").Id]);
+
+        ship.ClearDropOrder();
+
+        Assert.That(ship.PinnedDropOrder, Is.Empty);
+    }
 }

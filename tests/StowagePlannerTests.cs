@@ -383,4 +383,29 @@ public class StowagePlannerTests
             Assert.That(repack, Has.Count.EqualTo(lines.Sum(l => l.Containers.Count)));
         }
     }
+
+    [Test]
+    public void PlanTiered_DryRun_LeavesTheHoldUntouched_AndMatchesPlan()
+    {
+        var ship = OneBayShip(length: 6, width: 1, height: 1);
+        var bays = ship.Bays.ToList();
+        var lorville = PickedUpLine("Lorville", ContainerSize.Two);
+        Apply(lorville, StowagePlanner.Plan(bays, [], lorville)!);
+        var area18 = TestLocations.Site("Area18").Id;
+        var boxes = new[] { new StowBox(CargoContainerId.New(), ContainerSize.Two) };
+        var order = new[] { lorville.DropOffLocationId, area18 };
+
+        var planned = StowagePlanner.PlanTiered(bays, [lorville], area18, boxes, reserved: null, order);
+        var tight = StowagePlanner.PlanTiered(bays, [lorville], area18, [.. boxes, new StowBox(CargoContainerId.New(), ContainerSize.Two)], reserved: null, order);
+        var none = StowagePlanner.PlanTiered(bays, [lorville], area18, [.. Enumerable.Range(0, 3).Select(_ => new StowBox(CargoContainerId.New(), ContainerSize.Two))], reserved: null, order);
+
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(planned?.Tier, Is.EqualTo(StowTier.Planned));
+            Assert.That(planned!.Placements[boxes[0].Id].X, Is.EqualTo(3), "moat cell between the piles");
+            Assert.That(tight?.Tier, Is.EqualTo(StowTier.Tight));
+            Assert.That(none, Is.Null);
+            Assert.That(lorville.Containers.Single().Placement!.Value.X, Is.EqualTo(0), "a dry run never moves what is aboard");
+        }
+    }
 }

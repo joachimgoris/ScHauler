@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ScHauler.Models;
 
@@ -49,4 +50,20 @@ public sealed class PlacementConverter() : ValueConverter<Placement, string>(
             int.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture),
             parts[4] == "1");
     }
+}
+
+/// <summary>
+/// Comma-joined Guids in one text column: the pinned drop order is tiny and never queried, so no join table.
+/// </summary>
+public sealed class LocationIdListConverter() : ValueConverter<List<LocationId>, string>(
+    ids => string.Join(",", ids.Select(id => id.Value)),
+    s => Parse(s))
+{
+    public static ValueComparer<List<LocationId>> Comparer { get; } = new(
+        (a, b) => (a ?? new List<LocationId>()).SequenceEqual(b ?? new List<LocationId>()),
+        v => v.Aggregate(0, (hash, id) => HashCode.Combine(hash, id)),
+        v => v.ToList());
+
+    private static List<LocationId> Parse(string value) =>
+        [.. value.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(part => new LocationId(Guid.Parse(part)))];
 }

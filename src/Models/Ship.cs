@@ -5,6 +5,7 @@ namespace ScHauler.Models;
 public sealed class Ship
 {
     private readonly List<ShipBay> _bays = [];
+    private readonly List<LocationId> _pinnedDropOrder = [];
 
     private Ship(ShipId id, string name, int cargoCapacityScu)
     {
@@ -55,11 +56,30 @@ public sealed class Ship
     /// </summary>
     public LocationId? CurrentLocationId { get; private set; }
 
+    /// <summary>
+    /// Drop-offs in the order Joachim pinned them with ▲/▼; empty = follow the route heuristic. Survives moves and reloads; stale ids are ignored by the planner.
+    /// </summary>
+    public IReadOnlyList<LocationId> PinnedDropOrder => _pinnedDropOrder.AsReadOnly();
+
     public static Ship Create(string name, int cargoCapacityScu = 0) => new(ShipId.New(), name, cargoCapacityScu);
 
     public void SetCapacity(int cargoCapacityScu) => CargoCapacityScu = cargoCapacityScu;
 
     public void MoveTo(LocationId locationId) => CurrentLocationId = locationId;
+
+    public void PinDropOrder(IReadOnlyList<LocationId> order)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        if (order.Distinct().Count() != order.Count)
+        {
+            throw new ArgumentException("A drop order lists each destination once.", nameof(order));
+        }
+
+        _pinnedDropOrder.Clear();
+        _pinnedDropOrder.AddRange(order);
+    }
+
+    public void ClearDropOrder() => _pinnedDropOrder.Clear();
 
     public ShipBay AddBay(string name, int length, int width, int height, int drawOffsetX, int drawOffsetY)
     {
