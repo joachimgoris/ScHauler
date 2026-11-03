@@ -217,6 +217,18 @@ other ships than the Ironclad. Where that stands today:
   different app shape; decide the product question (shared instance vs
   self-hosted container per hauler) before any code.
 
+### 2026-11-03 — deployed on the homeserver (Tailscale only)
+
+Running at `https://schauler.bass-hippocampus.ts.net`. The repo's
+Dockerfile is built on the server (`podman compose up -d --build`, clone at
+`/home/joachim/schauler-app/ScHauler`); a `schauler-ts` Tailscale sidecar
+fronts it via `tailscale serve` (serve.json at
+`/home/joachim/tailscale-app/schauler.json`) and the app container joins
+its network namespace. No ports published, so neither LAN nor internet can
+reach it; the SQLite file lives in the named volume `joachim_schauler-data`.
+Update = `git pull` + the same `up --build`. The compose entries live in the
+homeserver compose, not in this repo.
+
 ### Pending decisions (recommendation noted; confirm when reached)
 
 - **Container edit rules** — implemented: add/remove only while Pending,
