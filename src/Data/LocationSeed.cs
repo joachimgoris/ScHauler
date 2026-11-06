@@ -154,6 +154,11 @@ public static class LocationSeed
         new("Patch City", LocationKind.Site, "Bloom"),
         new("Starlight Service Station", LocationKind.Site, "Bloom"),
         new("Checkmate Station", LocationKind.Site, "Monox"),
+        new("Chawla's Beach", LocationKind.Site, "Pyro IV"),
+        new("Dinger's Depot", LocationKind.Site, "Pyro IV"),
+        new("Fallow Field", LocationKind.Site, "Pyro IV"),
+        new("Goner's Deal", LocationKind.Site, "Pyro IV"),
+        new("Sacren's Plot", LocationKind.Site, "Pyro IV"),
         new("Stanton Gateway Station", LocationKind.Site, "Pyro"),
         new("Pyro Gateway Station", LocationKind.Site, "Stanton"),
     ];
